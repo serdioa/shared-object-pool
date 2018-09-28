@@ -20,7 +20,7 @@ public class PooledCounter implements Counter, PooledObject {
     }
 
     private final String key;
-    private AtomicInteger counter = new AtomicInteger();
+    private final AtomicInteger counter = new AtomicInteger();
 
     // @GuardedBy(lock)
     private Status status = Status.NEW;

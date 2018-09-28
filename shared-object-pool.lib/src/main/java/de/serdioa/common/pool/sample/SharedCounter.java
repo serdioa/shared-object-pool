@@ -4,6 +4,7 @@ import de.serdioa.common.pool.SharedObject;
 
 import java.util.Objects;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import org.slf4j.Logger;
@@ -20,7 +21,7 @@ public class SharedCounter implements Counter, SharedObject {
     // @GuardedBy(lock)
     private boolean disposed = false;
 
-    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+    private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
     SharedCounter(PooledCounter pooledCounter, Runnable disposeCallback) {
         this.pooledCounter = Objects.requireNonNull(pooledCounter);

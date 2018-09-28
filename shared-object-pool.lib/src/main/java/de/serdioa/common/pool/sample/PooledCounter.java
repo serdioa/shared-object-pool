@@ -6,6 +6,7 @@ import de.serdioa.common.pool.PooledObject;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import org.slf4j.Logger;
@@ -25,7 +26,7 @@ public class PooledCounter implements Counter, PooledObject {
     // @GuardedBy(lock)
     private Status status = Status.NEW;
 
-    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+    private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
     public PooledCounter(String key) {
         this.key = Objects.requireNonNull(key);

@@ -229,9 +229,10 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P extends P
 
         synchronized S createSharedObject() {
             ensureActive();
-            this.sharedCount++;
+            S sharedObject = SynchronizedSharedObjectPool.this.createSharedObject(this.pooledObject, this::disposeSharedObject);
 
-            return SynchronizedSharedObjectPool.this.createSharedObject(this.pooledObject, this::disposeSharedObject);
+            this.sharedCount++;
+            return sharedObject;
         }
 
 
@@ -243,7 +244,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P extends P
                 ensureActive();
 
                 if (this.sharedCount == 0) {
-                    // TODO: log notification that the number of disposes does not match number of acquires.
+                    logger.warn("Disposed of a shared object {}, but shared object counter is 0", this.key);
                 } else {
                     this.sharedCount--;
                 }

@@ -1,4 +1,6 @@
-package de.serdioa.common.pool;
+package de.serdioa.common.pool.sample;
+
+import de.serdioa.common.pool.SharedObject;
 
 import java.util.Objects;
 import java.util.concurrent.locks.Lock;
@@ -8,11 +10,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
-public class SharedDummyCounter implements DummyCounter, SharedObject {
-    private static final Logger logger = LoggerFactory.getLogger(SharedDummyCounter.class);
+public class SharedCounter implements Counter, SharedObject {
+    private static final Logger logger = LoggerFactory.getLogger(SharedCounter.class);
 
     private final String key;
-    private final PooledDummyCounter pooledCounter;
+    private final PooledCounter pooledCounter;
     private final Runnable disposeCallback;
 
     // @GuardedBy(lock)
@@ -20,12 +22,12 @@ public class SharedDummyCounter implements DummyCounter, SharedObject {
 
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
-    SharedDummyCounter(PooledDummyCounter pooledCounter, Runnable disposeCallback) {
+    SharedCounter(PooledCounter pooledCounter, Runnable disposeCallback) {
         this.pooledCounter = Objects.requireNonNull(pooledCounter);
         this.disposeCallback = Objects.requireNonNull(disposeCallback);
         this.key = this.pooledCounter.getKey();
 
-        logger.trace("Constructed SharedDummyCounter [{}]", this.key);
+        logger.trace("Constructed SharedCounter [{}]", this.key);
     }
 
     @Override
@@ -34,11 +36,11 @@ public class SharedDummyCounter implements DummyCounter, SharedObject {
         writeLock.lock();
         try {
             if (!this.disposed) {
-                logger.trace("Disposing of SharedDummyCounter[{}]", this.key);
+                logger.trace("Disposing of SharedCounter[{}]", this.key);
                 this.disposed = true;
                 this.disposeCallback.run();
             } else {
-                logger.trace("Skipped disposing of SharedDummyCounter[{}] - already disposed", this.key);
+                logger.trace("Skipped disposing of SharedCounter[{}] - already disposed", this.key);
             }
         } finally {
             writeLock.unlock();
@@ -87,7 +89,7 @@ public class SharedDummyCounter implements DummyCounter, SharedObject {
 
     private void ensureActive() {
         if (this.disposed) {
-            throw new IllegalStateException("SharedDummyCounter[" + this.key + "] is already disposed of");
+            throw new IllegalStateException("SharedCounter[" + this.key + "] is already disposed of");
         }
     }
 }

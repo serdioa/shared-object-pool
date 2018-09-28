@@ -1,4 +1,7 @@
-package de.serdioa.common.pool;
+package de.serdioa.common.pool.sample;
+
+import de.serdioa.common.pool.InitializationException;
+import de.serdioa.common.pool.PooledObject;
 
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -9,8 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
-public class PooledDummyCounter implements DummyCounter, PooledObject {
-    private static final Logger logger = LoggerFactory.getLogger(PooledDummyCounter.class);
+public class PooledCounter implements Counter, PooledObject {
+    private static final Logger logger = LoggerFactory.getLogger(PooledCounter.class);
 
     private enum Status {
         NEW, ACTIVE, DISPOSED;
@@ -24,9 +27,9 @@ public class PooledDummyCounter implements DummyCounter, PooledObject {
 
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
-    public PooledDummyCounter(String key) {
+    public PooledCounter(String key) {
         this.key = Objects.requireNonNull(key);
-        logger.trace("Constructed PooledDummyCounter[{}]", this.key);
+        logger.trace("Constructed PooledCounter[{}]", this.key);
     }
 
 
@@ -35,7 +38,7 @@ public class PooledDummyCounter implements DummyCounter, PooledObject {
         Lock writeLock = this.lock.writeLock();
         writeLock.lock();
         try {
-            logger.trace("Initializing PooledDummyCounter[{}]", this.key);
+            logger.trace("Initializing PooledCounter[{}]", this.key);
             if (this.status == Status.NEW) {
                 this.status = Status.ACTIVE;
             } else {
@@ -52,7 +55,7 @@ public class PooledDummyCounter implements DummyCounter, PooledObject {
         Lock writeLock = this.lock.writeLock();
         writeLock.lock();
         try {
-            logger.trace("Disposing of PooledDummyCounter[{}]", this.key);
+            logger.trace("Disposing of PooledCounter[{}]", this.key);
             if (this.status == Status.ACTIVE) {
                 this.status = Status.DISPOSED;
             } else {
@@ -110,7 +113,7 @@ public class PooledDummyCounter implements DummyCounter, PooledObject {
 
     private void ensureActive() {
         if (this.status != Status.ACTIVE) {
-            throw new IllegalStateException("PooledDummyCounter[" + this.key + "] is already disposed of");
+            throw new IllegalStateException("PooledCounter[" + this.key + "] is already disposed of");
         }
     }
 }

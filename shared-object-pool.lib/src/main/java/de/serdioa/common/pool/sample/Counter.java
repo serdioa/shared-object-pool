@@ -1,7 +1,7 @@
-package de.serdioa.common.pool;
+package de.serdioa.common.pool.sample;
 
 
-public interface DummyCounter {
+public interface Counter {
     int get();
 
     

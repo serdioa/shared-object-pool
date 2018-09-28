@@ -112,7 +112,16 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
 
 
     private Entry getEntry(K key) throws InvalidKeyException {
-        // TODO: try first check in the read lock, and only afterwards in the write lock.
+        Lock poolReadLock = this.lock.readLock();
+        poolReadLock.lock();
+        try {
+            Entry entry = this.entries.get(key);
+            if (entry != null) {
+                return entry;
+            }
+        } finally {
+            poolReadLock.unlock();
+        }
 
         Lock poolWriteLock = this.lock.writeLock();
         poolWriteLock.lock();

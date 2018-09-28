@@ -62,13 +62,13 @@ Benchmark                                             Mode  Cnt    Score   Error
 LockingSharedObjectPoolBenchmark_01.measureGet        avgt   25  291.223 ± 4.781  ns/op
 LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25  290.024 ± 3.738  ns/op
 
-### Separate get() and increment(), 2 thread
+### Separate get() and increment(), 2 threads
 
 Benchmark                                             Mode  Cnt     Score    Error  Units
 LockingSharedObjectPoolBenchmark_01.measureGet        avgt   25  1590.004 ± 97.425  ns/op
 LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25  1680.849 ± 67.728  ns/op
 
-### Separate get() and increment(), 4 thread
+### Separate get() and increment(), 4 threads
 
 Benchmark                                             Mode  Cnt     Score    Error  Units
 LockingSharedObjectPoolBenchmark_01.measureGet        avgt   25  1310.935 ± 70.364  ns/op
@@ -76,5 +76,21 @@ LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25  1243.855 ± 57.
 
 ## LockingSharedObjectPool - locks for pool and entries, read-lock-first for pool when getting an entry.
 
+### Separate get() and increment(), 1 thread
 
+Benchmark                                             Mode  Cnt    Score   Error  Units
+LockingSharedObjectPoolBenchmark_01.measureGet        avgt   25  302.500 ± 4.233  ns/op
+LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25  308.240 ± 1.142  ns/op
+
+### Separate get() and increment(), 2 threads
+
+Benchmark                                             Mode  Cnt     Score    Error  Units
+LockingSharedObjectPoolBenchmark_01.measureGet        avgt   25  1775.984 ± 47.921  ns/op
+LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25  1748.650 ± 38.942  ns/op
+
+### Separate get() and increment(), 4 threads
+
+Benchmark                                             Mode  Cnt     Score     Error  Units
+LockingSharedObjectPoolBenchmark_01.measureGet        avgt   25  2363.511 ± 133.880  ns/op
+LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25  2251.914 ± 142.642  ns/op
 

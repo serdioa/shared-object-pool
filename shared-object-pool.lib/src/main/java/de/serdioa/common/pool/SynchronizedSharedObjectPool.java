@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
+// Simple implementation using synchronization.
 public class SynchronizedSharedObjectPool<K, S extends SharedObject, P extends PooledObject> implements SharedObjectPool<K, S> {
     private static final Logger logger = LoggerFactory.getLogger(SynchronizedSharedObjectPool.class);
 
@@ -137,13 +138,25 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P extends P
             if (entrySharedCount > 0) {
                 // The entry is providing some shared objects, so it can't be disposed of.
                 return;
+            } else if (entrySharedCount == Entry.DISPOSED) {
+                // Another thread had already disposed of the entry. This could happens in the following scenario:
+                // * Another thread (B) released the last shared object from the entry, and called this method
+                // to offer the entry for disposal.
+                // * Before another thread (B) is able to obtain a synchronization lock, this thread (A) obtains
+                // the lock, acquires a new shared object, releases the shared object, and calls this method to offer
+                // the entry for disposal.
+                // * Another thread (B) obtain the synchronization lock and disposes of the entry.
+                // * This thread (A) obtains the synchronization lock, but the entry is already disposed of.
+                return;
+            } else if (entrySharedCount == Entry.NEW) {
+                throw new IllegalStateException("Entry offered for disposal, but the status is new: " + entry.getKey());
             }
 
             // Dispose of the entry. Note that the entry still remains in the cache.
             try {
                 entry.dispose();
             } catch (Exception ex) {
-                logger.error("Exception when disposing of entry {}", entry.getKey());
+                logger.error("Exception when disposing of entry {}", entry.getKey(), ex);
             }
         }
 

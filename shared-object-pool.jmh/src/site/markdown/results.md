@@ -33,3 +33,23 @@ Benchmark                                                    Mode  Cnt     Score
 SynchronizedSharedObjectPoolBenchmark_02.g                   avgt   25  1481.534 ± 60.143  ns/op
 SynchronizedSharedObjectPoolBenchmark_02.g:measureGet        avgt   25  1474.789 ± 60.739  ns/op
 SynchronizedSharedObjectPoolBenchmark_02.g:measureIncrement  avgt   25  1488.278 ± 59.855  ns/op
+
+## LockingSharedObjectPool - locks only for pool itself, synchronization for entries.
+
+### Separate get() and increment(), 1 thread
+
+Benchmark                                             Mode  Cnt    Score   Error  Units
+LockingSharedObjectPoolBenchmark_01.measureGet        avgt   25  169.630 ± 2.478  ns/op
+LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25  173.598 ± 3.232  ns/op
+
+### Separate get() and increment(), 2 threads
+
+Benchmark                                             Mode  Cnt     Score    Error  Units
+LockingSharedObjectPoolBenchmark_01.measureGet        avgt   25  1186.036 ± 37.938  ns/op
+LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25  1229.278 ± 31.761  ns/op
+
+### Separate get() and increment(), 4 threads
+
+Benchmark                                             Mode  Cnt     Score    Error  Units
+LockingSharedObjectPoolBenchmark_01.measureGet        avgt   25  1053.836 ± 52.465  ns/op
+LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25   995.484 ± 17.353  ns/op[

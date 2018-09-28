@@ -9,20 +9,20 @@ import de.serdioa.common.pool.sample.SharedCounter;
 import de.serdioa.common.pool.sample.SharedCounterFactory;
 
 
-// Test for SynchronizedSharedObjectPool.
-public class ConcurrencyTest_01 {
+// Test for LockingSharedObjectPool.
+public class ConcurrencyTest_02 {
     public static void main(String [] args) throws Exception {
-        new ConcurrencyTest_01().run();
+        new ConcurrencyTest_02().run();
     }
 
 
     private static final int THREADS_COUNT = 16;
     private static final int ITERATIONS = 1000000;
     private static final int BUCKETS = 1000;
-    private final SynchronizedSharedObjectPool<String, SharedCounter, PooledCounter> pool;
+    private final LockingSharedObjectPool<String, SharedCounter, PooledCounter> pool;
 
-    public ConcurrencyTest_01() {
-        this.pool = new SynchronizedSharedObjectPool<>();
+    public ConcurrencyTest_02() {
+        this.pool = new LockingSharedObjectPool<>();
         this.pool.setPooledObjectFactory(new PooledCounterFactory());
         this.pool.setSharedObjectFactory(new SharedCounterFactory());
     }
@@ -67,7 +67,7 @@ public class ConcurrencyTest_01 {
 
     private static class TestRunner implements Runnable {
         private final String name;
-        private final SynchronizedSharedObjectPool<String, SharedCounter, PooledCounter> pool;
+        private final SharedObjectPool<String, SharedCounter> pool;
         private final String key;
         private final CountDownLatch startLatch;
         private final CountDownLatch endLatch;
@@ -75,7 +75,7 @@ public class ConcurrencyTest_01 {
         private final int [] statistics = new int[BUCKETS];
         private int maxCount = -1;
 
-        TestRunner(String name, SynchronizedSharedObjectPool<String, SharedCounter, PooledCounter> pool, String key,
+        TestRunner(String name, SharedObjectPool<String, SharedCounter> pool, String key,
                 CountDownLatch startLatch, CountDownLatch endLatch) {
             this.name = name;
             this.pool = pool;

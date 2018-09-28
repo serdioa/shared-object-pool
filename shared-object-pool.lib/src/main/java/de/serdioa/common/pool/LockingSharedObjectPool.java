@@ -49,7 +49,9 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
             Exception exceptionOnInit = null;
 
             Entry entry = getEntry(key);
-            synchronized (entry) {
+            Lock entryWriteLock = entry.writeLock();
+            entryWriteLock.lock();
+            try {
                 int entrySharedCount = entry.getSharedCount();
                 if (entrySharedCount >= 0) {
                     // The entry is already initialized. Just return a shared object.
@@ -81,7 +83,9 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
                     // from the cache, and try once more.
                     removeEntryFromCache = true;
                 }
-            } // Releasing synchronization lock on entry.
+            } finally {
+                entryWriteLock.unlock();
+            }
 
             if (removeEntryFromCache) {
                 // Either the entry is already disposed of, or an attempt to initialize the entry failed.
@@ -143,7 +147,9 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
 
 
     private void offerDisposeEntry(Entry entry) {
-        synchronized (entry) {
+        Lock entryWriteLock = entry.writeLock();
+        entryWriteLock.lock();
+        try {
             // An entry may be disposed of only if it is not providing any shared objects. Since this method
             // is called without holding a lock on entry, it could be that in the meantime another thread acquired
             // a new shared object from the entry.
@@ -171,6 +177,8 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
             } catch (Exception ex) {
                 logger.error("Exception when disposing of entry {}", entry.getKey(), ex);
             }
+        } finally {
+            entryWriteLock.unlock();
         }
 
         // Remove the entry from the cache. When removing, make sure that we are removing the right
@@ -201,6 +209,10 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
         // @GuardedBy(this)
         private int sharedCount = NEW;
 
+        // Read/write lock.
+        private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+
+
         Entry(K key, P pooledObject) {
             this.key = Objects.requireNonNull(key);
             this.pooledObject = Objects.requireNonNull(pooledObject);
@@ -217,38 +229,74 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
         }
 
 
-        synchronized void init() throws InitializationException {
-            ensureNew();
+        public Lock readLock() {
+            return this.lock.readLock();
+        }
 
+
+        public Lock writeLock() {
+            return this.lock.writeLock();
+        }
+
+
+        void init() throws InitializationException {
+            Lock entryWriteLock = this.lock.writeLock();
+            entryWriteLock.lock();
             try {
-                this.pooledObject.init();
-                this.sharedCount = 0;
-            } catch (Exception ex) {
-                // An attempt to initialize this entry failed. Mark the entry as disposed and re-throw the exception.
-                this.sharedCount = DISPOSED;
-                throw InitializationException.wrap(this.key, ex);
+                ensureNew();
+
+                try {
+                    this.pooledObject.init();
+                    this.sharedCount = 0;
+                } catch (Exception ex) {
+                    // An attempt to initialize this entry failed. Mark the entry as disposed and re-throw the exception.
+                    this.sharedCount = DISPOSED;
+                    throw InitializationException.wrap(this.key, ex);
+                }
+            } finally {
+                entryWriteLock.unlock();
             }
         }
 
 
-        synchronized void dispose() {
-            ensureActive();
+        void dispose() {
+            Lock entryWriteLock = this.lock.writeLock();
+            entryWriteLock.lock();
+            try {
+                ensureActive();
 
-            this.pooledObject.dispose();
-            this.sharedCount = DISPOSED;
+                this.pooledObject.dispose();
+                this.sharedCount = DISPOSED;
+            } finally {
+                entryWriteLock.unlock();
+            }
         }
 
 
-        synchronized int getSharedCount() {
-            return this.sharedCount;
+        int getSharedCount() {
+            Lock entryReadLock = this.lock.readLock();
+            entryReadLock.lock();
+            try {
+                return this.sharedCount;
+            } finally {
+                entryReadLock.unlock();
+            }
         }
 
 
-        synchronized S createSharedObject() {
-            ensureActive();
-            this.sharedCount++;
+        S createSharedObject() {
+            Lock entryWriteLock = this.lock.writeLock();
+            entryWriteLock.lock();
+            try {
+                ensureActive();
 
-            return LockingSharedObjectPool.this.createSharedObject(this.pooledObject, this::disposeSharedObject);
+                S sharedObject = LockingSharedObjectPool.this.createSharedObject(this.pooledObject, this::disposeSharedObject);
+
+                this.sharedCount++;
+                return sharedObject;
+            } finally {
+                entryWriteLock.unlock();
+            }
         }
 
 
@@ -256,11 +304,13 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
             // Should we offer the pool to dispose of this entry after the synchronized block?
             boolean offerDisposeEntry = false;
 
-            synchronized (this) {
+            Lock entryWriteLock = this.lock.writeLock();
+            entryWriteLock.lock();
+            try {
                 ensureActive();
 
                 if (this.sharedCount == 0) {
-                    // TODO: log notification that the number of disposes does not match number of acquires.
+                    logger.warn("Disposed of a shared object {}, but shared object counter is 0", this.key);
                 } else {
                     this.sharedCount--;
                 }
@@ -272,6 +322,8 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
                     // an entry active for a time, so that it is immediately available if required.
                     offerDisposeEntry = true;
                 }
+            } finally {
+                entryWriteLock.unlock();
             }
 
             if (offerDisposeEntry) {
@@ -281,7 +333,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
 
 
         private void ensureNew() {
-            assert (Thread.holdsLock(this));
+            assert (this.lock.isWriteLockedByCurrentThread());
 
             if (this.sharedCount != NEW) {
                 throw new IllegalStateException("Entry is already initialized");
@@ -290,7 +342,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
 
 
         private void ensureActive() {
-            assert (Thread.holdsLock(this));
+            assert (this.lock.isWriteLockedByCurrentThread());
 
             if (this.sharedCount == NEW) {
                 throw new IllegalStateException("Entry is not initialized yet");

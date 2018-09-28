@@ -53,3 +53,28 @@ LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25  1229.278 ± 31.
 Benchmark                                             Mode  Cnt     Score    Error  Units
 LockingSharedObjectPoolBenchmark_01.measureGet        avgt   25  1053.836 ± 52.465  ns/op
 LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25   995.484 ± 17.353  ns/op[
+
+## LockingSharedObjectPool - locks for pool and entries
+
+### Separate get() and increment(), 1 thread
+
+Benchmark                                             Mode  Cnt    Score   Error  Units
+LockingSharedObjectPoolBenchmark_01.measureGet        avgt   25  291.223 ± 4.781  ns/op
+LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25  290.024 ± 3.738  ns/op
+
+### Separate get() and increment(), 2 thread
+
+Benchmark                                             Mode  Cnt     Score    Error  Units
+LockingSharedObjectPoolBenchmark_01.measureGet        avgt   25  1590.004 ± 97.425  ns/op
+LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25  1680.849 ± 67.728  ns/op
+
+### Separate get() and increment(), 4 thread
+
+Benchmark                                             Mode  Cnt     Score    Error  Units
+LockingSharedObjectPoolBenchmark_01.measureGet        avgt   25  1310.935 ± 70.364  ns/op
+LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25  1243.855 ± 57.730  ns/op
+
+## LockingSharedObjectPool - locks for pool and entries, read-lock-first for pool when getting an entry.
+
+
+

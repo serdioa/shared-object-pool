@@ -68,6 +68,7 @@ public class LockingDynamicSharedObject implements InvocationHandler {
     }
 
 
+    @SuppressWarnings("unchecked")
     public static <S extends SharedObject, P extends PooledObject> S create(Class<S> type, P pooledObject, Runnable disposeCallback) {
         LockingDynamicSharedObject invocationHandler = new LockingDynamicSharedObject(pooledObject, disposeCallback);
         return (S) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] {type}, invocationHandler);

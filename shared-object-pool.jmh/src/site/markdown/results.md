@@ -94,3 +94,11 @@ Benchmark                                             Mode  Cnt     Score     Er
 LockingSharedObjectPoolBenchmark_01.measureGet        avgt   25  2363.511 ± 133.880  ns/op
 LockingSharedObjectPoolBenchmark_01.measureIncrement  avgt   25  2251.914 ± 142.642  ns/op
 
+# DynamicSharedObject
+
+Benchmark                                                     Mode  Cnt   Score   Error  Units
+DynamicSharedObjectBenchmark.testLockingDynamicSharedCounter  avgt   10  28.327 ± 0.126  ns/op
+DynamicSharedObjectBenchmark.testPooledCounter                avgt   10  15.721 ± 0.497  ns/op
+DynamicSharedObjectBenchmark.testSharedCounter                avgt   10  27.229 ± 0.108  ns/op
+
+

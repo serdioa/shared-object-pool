@@ -50,6 +50,18 @@ public class SharedCounter implements Counter, SharedObject {
 
 
     @Override
+    public boolean isDisposed() {
+        Lock readLock = this.lock.readLock();
+        readLock.lock();
+        try {
+            return this.disposed;
+        } finally {
+            readLock.unlock();
+        }
+    }
+
+
+    @Override
     public int get() {
         Lock readLock = this.lock.readLock();
         readLock.lock();

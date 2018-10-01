@@ -1,6 +1,8 @@
 package de.serdioa.common.pool;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import de.serdioa.common.pool.sample.Counter;
 import de.serdioa.common.pool.sample.PooledCounter;
@@ -65,5 +67,18 @@ public class LockingDynamicSharedObjectTest {
     public void testMethodCallAfterDispose() {
         this.sharedCounter.dispose();
         this.sharedCounter.get();
+    }
+
+
+    @Test
+    public void testIsDisposed_notDisposed() {
+        assertFalse(this.sharedCounter.isDisposed());
+    }
+
+
+    @Test
+    public void testIsDisposed_disposed() {
+        this.sharedCounter.dispose();
+        assertTrue(this.sharedCounter.isDisposed());
     }
 }

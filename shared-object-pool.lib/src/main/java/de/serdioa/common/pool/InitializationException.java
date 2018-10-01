@@ -2,6 +2,10 @@ package de.serdioa.common.pool;
 
 
 public class InitializationException extends RuntimeException {
+
+    /** Serial version UID. */
+    private static final long serialVersionUID = 7353897128474452193L;
+
     public InitializationException(Object key) {
         super(buildDefaultMessage(key));
     }

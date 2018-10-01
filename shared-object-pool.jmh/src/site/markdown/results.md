@@ -101,4 +101,30 @@ DynamicSharedObjectBenchmark.testLockingDynamicSharedCounter  avgt   10  28.327 
 DynamicSharedObjectBenchmark.testPooledCounter                avgt   10  15.721 ± 0.497  ns/op
 DynamicSharedObjectBenchmark.testSharedCounter                avgt   10  27.229 ± 0.108  ns/op
 
+# ConcurrentSharedObjectPool
+
+### 1 thread
+
+Benchmark                                                   (disposeUnusedEntries)  Mode  Cnt     Score     Error  Units
+ConcurrentSharedObjectPoolBenchmark_01.measureGet                             true  avgt    5   426.348 ±  48.122  ns/op
+ConcurrentSharedObjectPoolBenchmark_01.measureGet                            false  avgt    5   171.036 ±  59.408  ns/op
+ConcurrentSharedObjectPoolBenchmark_01.measureGetUniqueKey                    true  avgt    5   459.975 ± 127.384  ns/op
+ConcurrentSharedObjectPoolBenchmark_01.measureGetUniqueKey                   false  avgt    5  1776.641 ± 516.553  ns/op
+
+### 2 threads
+
+Benchmark                                                   (disposeUnusedEntries)  Mode  Cnt     Score     Error  Units
+ConcurrentSharedObjectPoolBenchmark_01.measureGet                             true  avgt    5  1110.625 ±  56.414  ns/op
+ConcurrentSharedObjectPoolBenchmark_01.measureGet                            false  avgt    5   742.622 ±  58.139  ns/op
+ConcurrentSharedObjectPoolBenchmark_01.measureGetUniqueKey                    true  avgt    5   464.769 ±  27.456  ns/op
+ConcurrentSharedObjectPoolBenchmark_01.measureGetUniqueKey                   false  avgt    5  2188.693 ± 609.138  ns/op
+
+### 4 threads
+
+Benchmark                                                   (disposeUnusedEntries)  Mode  Cnt     Score      Error  Units
+ConcurrentSharedObjectPoolBenchmark_01.measureGet                             true  avgt    5  1604.821 ±  697.263  ns/op
+ConcurrentSharedObjectPoolBenchmark_01.measureGet                            false  avgt    5  1818.959 ±  357.490  ns/op
+ConcurrentSharedObjectPoolBenchmark_01.measureGetUniqueKey                    true  avgt    5   646.703 ±   95.195  ns/op
+ConcurrentSharedObjectPoolBenchmark_01.measureGetUniqueKey                   false  avgt    5  6323.872 ± 4947.114  ns/op
+
 

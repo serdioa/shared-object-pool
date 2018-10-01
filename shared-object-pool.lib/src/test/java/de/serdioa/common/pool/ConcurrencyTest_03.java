@@ -25,6 +25,7 @@ public class ConcurrencyTest_03 {
         this.pool = new ConcurrentSharedObjectPool<>();
         this.pool.setPooledObjectFactory(new PooledCounterFactory());
         this.pool.setSharedObjectFactory(new SharedCounterFactory());
+        this.pool.setDisposeUnusedEntries(false);
     }
 
 
@@ -43,8 +44,6 @@ public class ConcurrencyTest_03 {
 //            switch (i % 2) {
 //                case 0: key = "AAA"; break;
 //                case 1: key = "BBB"; break;
-//                case 2: key = "CCC"; break;
-//                case 3: key = "DDD"; break;
 //                default: key = "unexpected";
 //            }
 

@@ -18,6 +18,8 @@ public class SharedCounter implements Counter, SharedObject {
     private final PooledCounter pooledCounter;
     private final Runnable disposeCallback;
 
+    private volatile boolean dummy = false;
+
     // @GuardedBy(lock)
     private boolean disposed = false;
 
@@ -31,6 +33,7 @@ public class SharedCounter implements Counter, SharedObject {
         logger.trace("Constructed SharedCounter [{}]", this.key);
     }
 
+
     @Override
     public void dispose() {
         Lock writeLock = this.lock.writeLock();
@@ -40,6 +43,12 @@ public class SharedCounter implements Counter, SharedObject {
                 logger.trace("Disposing of SharedCounter[{}]", this.key);
                 this.disposed = true;
                 this.disposeCallback.run();
+
+                // This code actually never executes, but since dummy is volatile, JVM can't optimize it away
+                // and can't GC this object before the disposeCallback() above is finished.
+                if (dummy) {
+                    this.get();
+                }
             } else {
                 logger.trace("Skipped disposing of SharedCounter[{}] - already disposed", this.key);
             }

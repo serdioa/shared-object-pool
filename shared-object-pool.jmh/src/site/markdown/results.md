@@ -127,4 +127,25 @@ ConcurrentSharedObjectPoolBenchmark_01.measureGet                            fal
 ConcurrentSharedObjectPoolBenchmark_01.measureGetUniqueKey                    true  avgt    5   646.703 ±   95.195  ns/op
 ConcurrentSharedObjectPoolBenchmark_01.measureGetUniqueKey                   false  avgt    5  6323.872 ± 4947.114  ns/op
 
+# ConcurrentSharedObjectPool with week refs
+
+### 1 thread
+
+Benchmark                                                   (disposeUnusedEntries)  Mode  Cnt    Score   Error  Units
+ConcurrentSharedObjectPoolBenchmark_01.measureGet                             true  avgt   25  468.073 ± 1.852  ns/op
+ConcurrentSharedObjectPoolBenchmark_01.measureGetUniqueKey                    true  avgt   25  494.874 ± 2.579  ns/op
+
+### 2 threads
+
+Benchmark                                                   (disposeUnusedEntries)  Mode  Cnt     Score    Error  Units
+ConcurrentSharedObjectPoolBenchmark_01.measureGet                             true  avgt   25  1985.305 ± 37.721  ns/op
+ConcurrentSharedObjectPoolBenchmark_01.measureGetUniqueKey                    true  avgt   25   608.875 ± 13.127  ns/op
+
+### 4 threads
+
+Benchmark                                                   (disposeUnusedEntries)  Mode  Cnt     Score    Error  Units
+ConcurrentSharedObjectPoolBenchmark_01.measureGet                             true  avgt   25  2385.353 ± 27.371  ns/op
+ConcurrentSharedObjectPoolBenchmark_01.measureGetUniqueKey                    true  avgt   25   750.102 ± 21.390  ns/op
+
+
 

@@ -33,7 +33,7 @@ import org.openjdk.jmh.runner.options.TimeValue;
 public class ConcurrentSharedObjectPoolBenchmark_01 {
     private ConcurrentSharedObjectPool<String, SharedCounter, PooledCounter> pool;
 
-    @Param({"true", "false"})
+    @Param({"true"})
     private boolean disposeUnusedEntries;
 
     private AtomicLong index;
@@ -52,6 +52,8 @@ public class ConcurrentSharedObjectPoolBenchmark_01 {
     @TearDown(Level.Iteration)
     public void tearDown() {
         this.index = null;
+
+        this.pool.dispose();
         this.pool = null;
     }
 

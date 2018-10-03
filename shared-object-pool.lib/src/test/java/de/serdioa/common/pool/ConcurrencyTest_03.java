@@ -25,7 +25,7 @@ public class ConcurrencyTest_03 {
         this.pool = new ConcurrentSharedObjectPool<>();
         this.pool.setPooledObjectFactory(new PooledCounterFactory());
         this.pool.setSharedObjectFactory(new SharedCounterFactory());
-        this.pool.setDisposeUnusedEntries(false);
+        this.pool.setDisposeUnusedEntries(true);
     }
 
 
@@ -37,9 +37,9 @@ public class ConcurrencyTest_03 {
         Thread [] threads = new Thread[THREADS_COUNT];
         for (int i = 0; i < THREADS_COUNT; ++i) {
             String key;
-//            {
-//                key = "AAA";
-//            }
+            {
+                key = "AAA";
+            }
 
 //            switch (i % 2) {
 //                case 0: key = "AAA"; break;
@@ -47,13 +47,13 @@ public class ConcurrencyTest_03 {
 //                default: key = "unexpected";
 //            }
 
-            switch (i % 4) {
-                case 0: key = "AAA"; break;
-                case 1: key = "BBB"; break;
-                case 2: key = "CCC"; break;
-                case 3: key = "DDD"; break;
-                default: key = "unexpected";
-            }
+//            switch (i % 4) {
+//                case 0: key = "AAA"; break;
+//                case 1: key = "BBB"; break;
+//                case 2: key = "CCC"; break;
+//                case 3: key = "DDD"; break;
+//                default: key = "unexpected";
+//            }
 
             String name = key + "_" + i;
 
@@ -127,6 +127,10 @@ public class ConcurrencyTest_03 {
         private void runIteration() {
             SharedCounter counter = this.pool.get(this.key);
             int count = counter.increment();
+
+//            if (count % 1000000 != 0) {
+//                counter.dispose();
+//            }
             counter.dispose();
 
             this.statistics[Math.min(count, BUCKETS - 1)]++;

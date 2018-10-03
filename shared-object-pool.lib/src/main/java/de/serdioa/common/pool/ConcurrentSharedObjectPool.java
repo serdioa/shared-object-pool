@@ -1,9 +1,12 @@
 package de.serdioa.common.pool;
 
+import java.lang.ref.ReferenceQueue;
+import java.lang.ref.WeakReference;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -12,8 +15,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
-// Simple implementation using synchronization.
-public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends PooledObject> implements SharedObjectPool<K, S> {
+// Simple implementation using concurrent map.
+public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends PooledObject> implements
+        SharedObjectPool<K, S> {
+
     private static final Logger logger = LoggerFactory.getLogger(ConcurrentSharedObjectPool.class);
 
     // Factory for creating new pooled objects.
@@ -28,9 +33,23 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
     // Should we actually dispose unused entries?
     private boolean disposeUnusedEntries = true;
 
+    // A queue with weak references on shared objects. We keep them to be able to find shared objects which were not
+    // properly disposed of.
+    private final ReferenceQueue<S> sharedObjectsRefQueue = new ReferenceQueue<>();
+
+    // The thread processing weak references on shared objects claimed by the GC.
+    private Thread sharedObjectsRipper;
+
+    // The synchronization lock for lifecycle events (startup / shutdown).
+    private final Object lifecycleMonitor = new Object();
+
 
     public ConcurrentSharedObjectPool() {
-        // Sole constructor.
+        synchronized (this.lifecycleMonitor) {
+            this.sharedObjectsRipper = new Thread(this::reapSharedObjects, this.getClass().getName() + "-ripper");
+            this.sharedObjectsRipper.setDaemon(true);
+            this.sharedObjectsRipper.start();
+        }
     }
 
 
@@ -46,6 +65,34 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
 
     public void setDisposeUnusedEntries(boolean disposeUnusedEntries) {
         this.disposeUnusedEntries = disposeUnusedEntries;
+    }
+
+
+    public void dispose() {
+        synchronized (this.lifecycleMonitor) {
+            if (this.sharedObjectsRipper != null) {
+                this.sharedObjectsRipper.interrupt();
+                this.sharedObjectsRipper = null;
+            }
+        }
+    }
+
+
+    private void reapSharedObjects() {
+        try {
+            while (true) {
+                SharedObjectWeakReference<?, ? extends S> ref
+                        = (SharedObjectWeakReference<?, ? extends S>) this.sharedObjectsRefQueue.remove();
+                try {
+                    ref.disposeIfRequired();
+                } catch (Exception ex) {
+                    logger.error("Exception when disposing of shared object {}", ref.getKey(), ex);
+                }
+            }
+        } catch (InterruptedException ex) {
+            // The reaper thread has been interrupted. Propagate the interruption status to the caller.
+            Thread.currentThread().interrupt();
+        }
     }
 
 
@@ -147,7 +194,6 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
     }
 
 
-
     private Entry createEntry(K key) throws InvalidKeyException {
         P pooledObject = createPooledObject(key);
         return new Entry(key, pooledObject);
@@ -214,6 +260,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
 
 
     private class Entry {
+
         // This entry is not initialized yet.
         public static final int NEW = -1;
 
@@ -239,12 +286,22 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
         // See "lock" below.
         private final AtomicInteger sharedCount = new AtomicInteger(NEW);
 
+        // Weak references on shared objects. Keeping weak references on shared objects allows to find shared objects
+        // which were not properly disposed of.
+        // Key: dispose callback for a shared object (runnable), value: weak reference on shared object.
+        private final AtomicLong sharedObjectIdGen = new AtomicLong();
+        private final ConcurrentMap<Object, SharedObjectWeakReference<K, S>> sharedObjectWeakRefs
+                = new ConcurrentHashMap<>();
+        private final ConcurrentMap<Object, SharedObjectWeakReference<K, S>> disposedSharedObjectWeakRefs
+                = new ConcurrentHashMap<>();
+
         // Lock for lifecycle management.
         // Changing the lifecycle of this entry, that is executing init() and dispose(), requires exclusive ("write")
         // lock. Other operations, such as creating or disposing of a shared object, requires shared ("read") lock.
         // The locking policy ensures that no other operations may run when the entry's lifecycle stage is changed,
         // but many non-lifecycle-related operations may run in parallel when the entry is active.
         private final ReadWriteLock lock = new ReentrantReadWriteLock();
+
 
         Entry(K key, P pooledObject) {
             this.key = Objects.requireNonNull(key);
@@ -354,9 +411,40 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
                 // We have just ensured that this entry is active. Since we are holding the shared lock, the lifecycle
                 // of this entry can't change (it remains active as long the lock is not released), even though
                 // the number of shared objects may be changed by other threads which are also holding the shared lock.
-                S sharedObject = ConcurrentSharedObjectPool.this.createSharedObject(this.pooledObject,
-                        this::disposeSharedObject);
+
+                // Create a callback called when the shared object is disposed. The callback is also used as a key
+                // in a map which contains weak references on shared objects. In order to remove the weak reference
+                // from the map when the shared object is disposed of, the callback requires a reference to itself
+                // (as a map key).
+                // Using the callback itself as a map key looks tricky, but actually it is not. We may have used
+                // any unique object for a particular shared object (just "new Object()" would be perfectly OK)
+                // as a map key, but it makes little sense to create additional objects when we already have
+                // a unique dispose callback for each shared object.
+                final long sharedObjectId = this.sharedObjectIdGen.getAndIncrement();
+                final SharedObjectWeakReferenceHolder<K, S> sharedObjectWeakRefHolder
+                        = new SharedObjectWeakReferenceHolder<>();
+                Runnable disposeDirectCallback = new Runnable() {
+                    @Override
+                    public void run() {
+                        Entry.this.disposeSharedObject(this, sharedObjectId, true, sharedObjectWeakRefHolder.ref);
+                    }
+                };
+                Runnable disposeWeakRefCallback = new Runnable() {
+                    @Override
+                    public void run() {
+                        Entry.this.disposeSharedObject(disposeDirectCallback, sharedObjectId, false, sharedObjectWeakRefHolder.ref);
+                    }
+                };
+                S sharedObject = ConcurrentSharedObjectPool.this
+                        .createSharedObject(this.pooledObject, disposeDirectCallback);
                 this.sharedCount.incrementAndGet();
+
+                SharedObjectWeakReference<K, S> sharedObjectWeakRef = new SharedObjectWeakReference<>(this.key,
+                        sharedObjectId, sharedObject, disposeWeakRefCallback,
+                        ConcurrentSharedObjectPool.this.sharedObjectsRefQueue);
+                sharedObjectWeakRefHolder.ref = sharedObjectWeakRef;
+                this.sharedObjectWeakRefs.put(disposeDirectCallback, sharedObjectWeakRef);
+
                 return sharedObject;
             } finally {
                 sharedLock.unlock();
@@ -364,40 +452,56 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
         }
 
 
-        private void disposeSharedObject() {
+        private void disposeSharedObject(Object weakRefKey, long sharedObjectId, boolean direct,
+                SharedObjectWeakReference<K, S> providedWeakRef) {
             // Should we offer the pool to dispose of this entry after the locked section?
             boolean offerDisposeEntry = false;
+
+            if (providedWeakRef == null) {
+                logger.error("Disposing of shared object {} / {} ({}): provided weak ref is null",
+                        this.key, sharedObjectId, (direct ? "direct" : "ref"));
+            }
 
             Lock sharedLock = this.sharedLock();
             sharedLock.lock();
             try {
-                int currentSharedCount = this.sharedCount.get();
-                if (currentSharedCount == NEW) {
-                    throw new IllegalStateException("Can not dispose of shared object from entry " + this.key
-                            + ": the entry is not initialized yet");
-                } else if (currentSharedCount == DISPOSED) {
-                    throw new IllegalStateException("Can not dispose of shared object from entry " + this.key
-                            + ": the entry is already disposed of");
-                } else if (currentSharedCount == 0) {
-                    throw new IllegalStateException("Can not dispose of shared object from entry " + this.key
-                            + ": the entry has 0 shared objects");
-                }
-                assert (currentSharedCount > 0);
-
-                // We have just ensured that this entry is active. Since we are holding the shared lock, the lifecycle
-                // of this entry can't change (it remains active as long the lock is not released), even though
-                // the number of shared objects may be changed by other threads which are also holding the shared lock.
-                if (currentSharedCount == 0) {
-                    // This could happens if a buggy implementation of a SharedObject allows to dispose of the same
-                    // shared object more than once. This is a bug indeed,
-                }
-                int updatedSharedCount = this.sharedCount.decrementAndGet();
-                if (updatedSharedCount == 0) {
-                    // This entry is not providing any shared objects anymore, and may be disposed of.
-                    // It is up to the pool to deside if the entry should actually be disposed of.
-                    // A pool implementation may decide to dispose of the entry immediately, or it may decide to keep
-                    // an entry active for a time, so that it is immediately available if required.
-                    offerDisposeEntry = true;
+                synchronized (providedWeakRef) {
+                    // Remove the weak reference on the shared object.
+                    SharedObjectWeakReference<K, S> sharedObjectWeakRef = this.sharedObjectWeakRefs.remove(weakRefKey);
+                    if (sharedObjectWeakRef != null) {
+                        boolean isDisposed = sharedObjectWeakRef.isDisposed();
+                        if (isDisposed) {
+                            // The shared object is still in the active map, but is marked as disposed.
+                            boolean availableFromRef = (sharedObjectWeakRef.get() != null);
+                            logger.warn("Disposing of shared object {} / {} ({}): ref still exist, but the object "
+                                    + "is already disposed by {}, availableFromRef={}", this.key, sharedObjectId, (direct ? "direct" : "ref"),
+                                    sharedObjectWeakRef.getDisposedByName(), availableFromRef);
+                        } else {
+                            // Expected case: ref is available and is not marked as disposed.
+                            offerDisposeEntry = doDisposeSharedObject(sharedObjectWeakRef, weakRefKey, direct);
+                        }
+                    } else {
+                        // Ref is not found. Check in the map with disposed refs.
+                        SharedObjectWeakReference<K, S> disposedWeakRef = this.disposedSharedObjectWeakRefs
+                                .get(weakRefKey);
+                        if (disposedWeakRef != null) {
+                            boolean disposedDirect = disposedWeakRef.isDisposedDirect();
+                            if (direct || !disposedDirect) {
+                                boolean availableFromRef = (disposedWeakRef.get() != null);
+                                logger.warn("Disposing of shared object {} / {} ({}): ref does not exist, the object "
+                                        + "is already disposed by {}, availableFromRef={}", this.key, sharedObjectId, (direct ? "direct" : "ref"),
+                                        disposedWeakRef.getDisposedByName(), availableFromRef, new Exception("Stack Trace"));
+                            } else {
+                                // Expected case: attempt to dispose weak ref by ripper found that it was already
+                                // disposed directly.
+                            }
+                        } else {
+                            boolean availableFromRef = (providedWeakRef.get() != null);
+                            logger.warn("Disposing of shared object {} / {} ({}): ref does not exist, the object "
+                                    + "can't be found amongst disposed, availableFromRef={}", this.key, sharedObjectId,
+                                    (direct ? "direct" : "ref"), availableFromRef);
+                        }
+                    }
                 }
             } finally {
                 sharedLock.unlock();
@@ -409,5 +513,106 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
                 ConcurrentSharedObjectPool.this.offerDisposeEntry(this);
             }
         }
+
+
+        private boolean doDisposeSharedObject(SharedObjectWeakReference<K, S> sharedObjectWeakRef,
+                Object weakRefKey, boolean direct) {
+            assert (Thread.holdsLock(sharedObjectWeakRef));
+
+            if (!direct) {
+                logger.warn("Disposing of shared object {} / {} through a weak reference. "
+                        + "The shared object may have been not been properly disposed of.",
+                        this.key, sharedObjectWeakRef.getId());
+            }
+
+            int currentSharedCount = this.sharedCount.get();
+            if (currentSharedCount == NEW) {
+                throw new IllegalStateException("Can not dispose of shared object from entry " + this.key
+                        + ": the entry is not initialized yet");
+            } else if (currentSharedCount == DISPOSED) {
+                throw new IllegalStateException("Can not dispose of shared object from entry " + this.key
+                        + ": the entry is already disposed of");
+            } else if (currentSharedCount == 0) {
+                throw new IllegalStateException("Can not dispose of shared object from entry " + this.key
+                        + ": the entry has 0 shared objects");
+            }
+            assert (currentSharedCount > 0);
+
+            sharedObjectWeakRef.markAsDisposed(direct);
+            this.disposedSharedObjectWeakRefs.put(weakRefKey, sharedObjectWeakRef);
+
+            int updatedSharedCount = this.sharedCount.decrementAndGet();
+
+            // If this entry is not providing any shared objects anymore, it may be disposed of.
+            // It is up to the pool to deside if the entry should actually be disposed of.
+            // A pool implementation may decide to dispose of the entry immediately, or it may decide to keep
+            // an entry active for a time, so that it is immediately available if required.
+            return (updatedSharedCount == 0);
+        }
+    }
+
+
+    private static class SharedObjectWeakReference<K, S extends SharedObject> extends WeakReference<S> {
+
+        private final K key;
+        private final long id;
+        private final Runnable disposeCallback;
+        private Thread disposedBy;
+        private boolean disposedDirect;
+
+
+        SharedObjectWeakReference(K key, long id, S referent, Runnable disposeCallback,
+                ReferenceQueue<? super S> queue) {
+            super(referent, queue);
+            this.key = Objects.requireNonNull(key);
+            this.id = id;
+            this.disposeCallback = Objects.requireNonNull(disposeCallback);
+        }
+
+
+        public K getKey() {
+            return this.key;
+        }
+
+
+        public long getId() {
+            return this.id;
+        }
+
+
+        public void markAsDisposed(boolean direct) {
+            assert (Thread.holdsLock(this));
+
+            this.disposedBy = Thread.currentThread();
+            this.disposedDirect = direct;
+        }
+
+
+        public boolean isDisposed() {
+            assert (Thread.holdsLock(this));
+            return (this.disposedBy != null);
+        }
+
+
+        public String getDisposedByName() {
+            assert (Thread.holdsLock(this));
+            return (this.disposedBy == null ? null : this.disposedBy.getName());
+        }
+
+
+        public boolean isDisposedDirect() {
+            assert (Thread.holdsLock(this));
+            return this.disposedDirect;
+        }
+
+
+        public void disposeIfRequired() {
+            this.disposeCallback.run();
+        }
+    }
+
+
+    private static class SharedObjectWeakReferenceHolder<K, S extends SharedObject> {
+        public SharedObjectWeakReference<K, S> ref;
     }
 }

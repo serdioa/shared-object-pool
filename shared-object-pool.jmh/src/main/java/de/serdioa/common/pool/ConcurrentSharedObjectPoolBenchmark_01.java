@@ -86,6 +86,7 @@ public class ConcurrentSharedObjectPoolBenchmark_01 {
                 .measurementIterations(10)
                 .measurementTime(TimeValue.seconds(5))
                 .forks(1)
+                .threads(4)
                 .syncIterations(true) // try to switch to "false"
                 .build();
 

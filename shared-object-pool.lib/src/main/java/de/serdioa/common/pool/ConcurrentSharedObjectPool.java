@@ -446,7 +446,6 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
                 // Construct a new shared object which will invoke disposeDirectCallback when disposed.
                 S sharedObject = ConcurrentSharedObjectPool.this.createSharedObject(this.pooledObject,
                         disposeDirectCallback);
-                this.sharedCount.incrementAndGet();
 
                 // Construct a phantom reference on the shared object and register it in the reference queue.
                 // The reaper thread will invoke disposePhantomRefCallback if the shared object is not properly
@@ -460,6 +459,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
                 // object is properly disposed of.
                 this.sharedObjectPhantomRefs.put(phantomReferenceKey, sharedObjectPhantomRef);
 
+                this.sharedCount.incrementAndGet();
                 return sharedObject;
             } finally {
                 sharedLock.unlock();
@@ -507,23 +507,46 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
                             offerDisposeEntry = doDisposeSharedObject(sharedObjectPhantomRef, direct);
                         }
                     } else {
-                        // Phantom reference is not found in the map. Check the reference (which we received
-                        // as an argument to this method) to see if it was properly disposed.
+                        // Phantom reference is not found in the map, so the shared object is already disposed of.
+                        // Below we check various cases: some of them are perfectly OK, other indicate errors.
+
+                        // Check the reference (which we received as an argument to this method) to see if the shared
+                        // object was disposed directly or indirectly.
                         boolean disposedDirect = providedPhantomRef.isDisposedDirect();
-                        if (direct || !disposedDirect) {
-                            // Unexpected case:
-
-                            // TODO: write comments. Exclude the case when ripper is faster than normal dispose,
-                            // that is, no warning if normal dispose finds that the object already has been disposed
-                            // of by the ripper. In such case an info message is required: "ignore previous warning
-                            // from the ripper".
-
-                            logger.warn("Disposing of shared object {} / {} ({}): ref does not exist, the object "
-                                    + "is already disposed by {}", this.key, sharedObjectId,
-                                    (direct ? "direct" : "ref"), providedPhantomRef.getDisposedByName());
+                        if (direct) {
+                            if (disposedDirect) {
+                                // The shared object was already directly disposed. This indicates a programming
+                                // error: the same shared object was directly disposed more than once.
+                                logger.warn("Disposing of shared object {} / {} ({}): the object is already disposed "
+                                        + "by {}", this.key, sharedObjectId, (direct ? "direct" : "ref"),
+                                        providedPhantomRef.getDisposedByName());
+                            } else {
+                                // The shared object was already disposed by the ripper thread through a phantom
+                                // reference. I have observed such case due to Java runtime optimization.
+                                // If the JVM runtime may prove that the object is not used in the subsequent code,
+                                // it may give the object to the GC even though a method invoked on that object is still
+                                // running. The "natural" borders of methods do not play any role, because methods
+                                // may be inlined by the JVM runtime. As a workaround to prevent such false positives,
+                                // one has to use the shared object after the method dispose() is called on it,
+                                // but it is not elegent.
+                                logger.info("Disposing of shared object {} / {} ({}): the object is already disposed "
+                                        + "by the ripper thread {}. Please ignore previous warning from the ripper "
+                                        + "thread about this shared object not being properly disposed of: that is "
+                                        + "just a result of JVM runtime optimization", this.key, sharedObjectId,
+                                        (direct ? "direct" : "ref"), providedPhantomRef.getDisposedByName());
+                            }
                         } else {
-                            // Expected case: attempt to dispose phantom ref by ripper found that it was already
-                            // disposed directly.
+                            if (disposedDirect) {
+                                // Expected case: attempt to dispose shared object through phantom reference
+                                // by the ripper found that the shared object already has been disposed directly.
+                            } else {
+                                // The shared object has already been disposed by the ripper thread. This indicates
+                                // a programming error because the ripper thread should process each shared object
+                                // only once.
+                                logger.warn("Disposing of shared object {} / {} ({}): the object is already disposed "
+                                        + "by {}", this.key, sharedObjectId, (direct ? "direct" : "ref"),
+                                        providedPhantomRef.getDisposedByName());
+                            }
                         }
                     }
                 }

@@ -425,28 +425,23 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
                 final SharedObjectPhantomReferenceHolder<K, S> sharedObjectPhantomRefHolder
                         = new SharedObjectPhantomReferenceHolder<>();
 
-                // Create a callback called when the shared object is disposed. The callback is also used as a key
-                // in a map which contains phantom references on shared objects. In order to remove the phantom
-                // reference from the map when the shared object is disposed of, the callback requires a reference
-                // to itself (as a map key).
+                // Create a callback for disposing the shared object directly, that is by invoking the dispose method.
+                Runnable disposeDirectCallback = () -> {
+                    Entry.this.disposeSharedObject(sharedObjectPhantomRefHolder.ref, true);
+                };
+                // Create a callback for disposing the shared object indirectly, that is from the reaper thread
+                // through the phantom reference.
+                Runnable disposePhantomRefCallback = () -> {
+                    Entry.this.disposeSharedObject(sharedObjectPhantomRefHolder.ref, false);
+                };
+
+                // The direct callback is also used as a key in a map which contains phantom references
+                // on shared objects.
                 // Using the callback itself as a map key looks tricky, but actually it is not. We may have used
                 // any unique object for a particular shared object (just "new Object()" would be perfectly OK)
                 // as a map key, but it makes little sense to create additional objects when we already have
                 // a unique dispose callback for each shared object.
-                // For the first callback we can't use the lambda expression, because we require "this" reference
-                // which is not available in lambdas.
-                Runnable disposeDirectCallback = new Runnable() {
-                    @Override
-                    public void run() {
-                        Entry.this.disposeSharedObject(this, sharedObjectId, true, sharedObjectPhantomRefHolder.ref);
-                    }
-                };
-                // For the second callback we can use a lambda expression, since we are using the previous callback
-                // as a map key.
-                Runnable disposePhantomRefCallback = () -> {
-                    Entry.this.disposeSharedObject(disposeDirectCallback, sharedObjectId, false,
-                            sharedObjectPhantomRefHolder.ref);
-                };
+                Object phantomReferenceKey = disposeDirectCallback;
 
                 // Construct a new shared object which will invoke disposeDirectCallback when disposed.
                 S sharedObject = ConcurrentSharedObjectPool.this.createSharedObject(this.pooledObject,
@@ -457,10 +452,13 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
                 // The reaper thread will invoke disposePhantomRefCallback if the shared object is not properly
                 // disposed of.
                 SharedObjectPhantomReference<K, S> sharedObjectPhantomRef = new SharedObjectPhantomReference<>(this.key,
-                        sharedObjectId, sharedObject, disposePhantomRefCallback,
+                        sharedObjectId, sharedObject, disposePhantomRefCallback, phantomReferenceKey,
                         ConcurrentSharedObjectPool.this.sharedObjectsRefQueue);
                 sharedObjectPhantomRefHolder.ref = sharedObjectPhantomRef;
-                this.sharedObjectPhantomRefs.put(disposeDirectCallback, sharedObjectPhantomRef);
+
+                // Store the phantom reference on the shared object in a map, so that we may track if the shared
+                // object is properly disposed of.
+                this.sharedObjectPhantomRefs.put(phantomReferenceKey, sharedObjectPhantomRef);
 
                 return sharedObject;
             } finally {
@@ -469,10 +467,12 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
         }
 
 
-        private void disposeSharedObject(Object phantomRefKey, long sharedObjectId, boolean direct,
-                SharedObjectPhantomReference<K, S> providedPhantomRef) {
+        private void disposeSharedObject(SharedObjectPhantomReference<K, S> providedPhantomRef, boolean direct) {
             // Should we offer the pool to dispose of this entry after the locked section?
             boolean offerDisposeEntry = false;
+
+            Object phantomRefKey = providedPhantomRef.getPhantomReferenceKey();
+            long sharedObjectId = providedPhantomRef.getSharedObjectId();
 
             Lock sharedLock = this.sharedLock();
             sharedLock.lock();
@@ -581,20 +581,31 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
 
 
     private static class SharedObjectPhantomReference<K, S extends SharedObject> extends PhantomReference<S> {
-
+        // The key of the pooled object, and the ID of the shared object. Both are used only for logging.
         private final K key;
         private final long sharedObjectId;
+
+        // A callback to be invoked to dispose of the shared object.
         private final Runnable disposeCallback;
+
+        // A key in the entry map pointing to this phantom reference.
+        private final Object phantomReferenceKey;
+
+        // The thread which disposed of the shared object held by this phantom reference, if any.
         private Thread disposedBy;
+
+        // Was the shared object held by this phantom reference disposed directly, that is by calling it's dispose
+        // method (true) or indirectly, that is by the ripper thread cleaning up phantom references (false).
         private boolean disposedDirect;
 
 
         SharedObjectPhantomReference(K key, long sharedObjectId, S referent, Runnable disposeCallback,
-                ReferenceQueue<? super S> queue) {
+                Object phantomReferenceKey, ReferenceQueue<? super S> queue) {
             super(referent, queue);
             this.key = Objects.requireNonNull(key);
             this.sharedObjectId = sharedObjectId;
             this.disposeCallback = Objects.requireNonNull(disposeCallback);
+            this.phantomReferenceKey = Objects.requireNonNull(phantomReferenceKey);
         }
 
 
@@ -608,6 +619,20 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
         }
 
 
+        public Object getPhantomReferenceKey() {
+            return this.phantomReferenceKey;
+        }
+
+
+        public void disposeIfRequired() {
+            this.disposeCallback.run();
+        }
+
+        // Subsequent methods must be called when synchronized on this phantom reference, each of them contains
+        // an assertion. We are using assertions instead of checks with runtime exceptions, because all methods
+        // may be used only inside the class ConcurrentSharedObjectPool (this file), so we are in a full control.
+        // Assertions are just to check for possible programming errors, especially if this class is refactored later.
+
         public void markAsDisposed(boolean direct) {
             assert (Thread.holdsLock(this));
 
@@ -618,28 +643,28 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
 
         public boolean isDisposed() {
             assert (Thread.holdsLock(this));
+
             return (this.disposedBy != null);
         }
 
 
         public String getDisposedByName() {
             assert (Thread.holdsLock(this));
+
             return (this.disposedBy == null ? null : this.disposedBy.getName());
         }
 
 
         public boolean isDisposedDirect() {
             assert (Thread.holdsLock(this));
+
             return this.disposedDirect;
-        }
-
-
-        public void disposeIfRequired() {
-            this.disposeCallback.run();
         }
     }
 
 
+    // Simple mutable holder class. We may have used a 1-element array to hold the object, but arrays of generic
+    // objects are not directly support and require casting, so a simple mutable object is more elegant.
     private static class SharedObjectPhantomReferenceHolder<K, S extends SharedObject> {
         public SharedObjectPhantomReference<K, S> ref;
     }

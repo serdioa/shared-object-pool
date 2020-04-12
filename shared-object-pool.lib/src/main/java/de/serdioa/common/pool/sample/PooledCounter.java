@@ -1,7 +1,6 @@
 package de.serdioa.common.pool.sample;
 
 import de.serdioa.common.pool.InitializationException;
-import de.serdioa.common.pool.PooledObject;
 
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -13,7 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
-public class PooledCounter implements Counter, PooledObject {
+public class PooledCounter implements Counter {
     private static final Logger logger = LoggerFactory.getLogger(PooledCounter.class);
 
     private enum Status {
@@ -34,7 +33,6 @@ public class PooledCounter implements Counter, PooledObject {
     }
 
 
-    @Override
     public void init() throws InitializationException {
         Lock writeLock = this.lock.writeLock();
         writeLock.lock();
@@ -51,7 +49,6 @@ public class PooledCounter implements Counter, PooledObject {
     }
 
 
-    @Override
     public void dispose() {
         Lock writeLock = this.lock.writeLock();
         writeLock.lock();

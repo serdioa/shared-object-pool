@@ -9,14 +9,9 @@ import org.slf4j.LoggerFactory;
 
 
 // Simple implementation using synchronization.
-public class SynchronizedSharedObjectPool<K, S extends SharedObject, P extends PooledObject> implements SharedObjectPool<K, S> {
+public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends AbstractSharedObjectPool<K, S, P> {
+
     private static final Logger logger = LoggerFactory.getLogger(SynchronizedSharedObjectPool.class);
-
-    // Factory for creating new pooled objects.
-    private PooledObjectFactory<K, P> pooledObjectFactory;
-
-    // Factory for creating shared objects from pooled objects.
-    private SharedObjectFactory<P, S> sharedObjectFactory;
 
     // Pooled entries.
     // @GuardedBy(lock)
@@ -24,16 +19,6 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P extends P
 
     // Synchronization monitor.
     private final Object lock = new Object();
-
-
-    public void setPooledObjectFactory(PooledObjectFactory<K, P> factory) {
-        this.pooledObjectFactory = Objects.requireNonNull(factory);
-    }
-
-
-    public void setSharedObjectFactory(SharedObjectFactory<P, S> factory) {
-        this.sharedObjectFactory = Objects.requireNonNull(factory);
-    }
 
 
     @Override
@@ -51,11 +36,11 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P extends P
                 if (entrySharedCount >= 0) {
                     // The entry is already initialized. Just return a shared object.
                     return entry.createSharedObject();
-                } else if  (entrySharedCount == Entry.NEW) {
+                } else if (entrySharedCount == Entry.NEW) {
                     // The entry was just added to the pool either by this thread or by another thread.
                     // Since this thread synchronized on the entry first, we have to initialize it.
                     try {
-                        entry.init();
+                        entry.initialize();
                         return entry.createSharedObject();
                     } catch (Exception ex) {
                         // An attempt to initialize this entry failed. Process this case after releasing
@@ -119,16 +104,6 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P extends P
     }
 
 
-    protected P createPooledObject(K key) throws InvalidKeyException {
-        return this.pooledObjectFactory.create(key);
-    }
-
-
-    protected S createSharedObject(P pooledObject, Runnable disposeCallback) {
-        return this.sharedObjectFactory.createShared(pooledObject, disposeCallback);
-    }
-
-
     private void offerDisposeEntry(Entry entry) {
         synchronized (entry) {
             // An entry may be disposed of only if it is not providing any shared objects. Since this method
@@ -170,6 +145,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P extends P
 
 
     private class Entry {
+
         // This entry is not initialized yet.
         public static final int NEW = -1;
 
@@ -183,6 +159,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P extends P
         // Negative value means that this entry is not initialized.
         // @GuardedBy(this)
         private int sharedCount = NEW;
+
 
         Entry(K key, P pooledObject) {
             this.key = Objects.requireNonNull(key);
@@ -200,11 +177,11 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P extends P
         }
 
 
-        synchronized void init() throws InitializationException {
+        synchronized void initialize() throws InitializationException {
             ensureNew();
 
             try {
-                this.pooledObject.init();
+                SynchronizedSharedObjectPool.this.initializePooledObject(this.pooledObject);
                 this.sharedCount = 0;
             } catch (Exception ex) {
                 // An attempt to initialize this entry failed. Mark the entry as disposed and re-throw the exception.
@@ -217,7 +194,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P extends P
         synchronized void dispose() {
             ensureActive();
 
-            this.pooledObject.dispose();
+            SynchronizedSharedObjectPool.this.disposePooledObject(this.pooledObject);
             this.sharedCount = DISPOSED;
         }
 

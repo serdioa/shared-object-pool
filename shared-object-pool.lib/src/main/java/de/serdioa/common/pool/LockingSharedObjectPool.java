@@ -12,14 +12,9 @@ import org.slf4j.LoggerFactory;
 
 
 // Implementation using read/write locks.
-public class LockingSharedObjectPool<K, S extends SharedObject, P extends PooledObject> implements SharedObjectPool<K, S> {
+public class LockingSharedObjectPool<K, S extends SharedObject, P> extends AbstractSharedObjectPool<K, S, P> {
+
     private static final Logger logger = LoggerFactory.getLogger(LockingSharedObjectPool.class);
-
-    // Factory for creating new pooled objects.
-    private PooledObjectFactory<K, P> pooledObjectFactory;
-
-    // Factory for creating shared objects from pooled objects.
-    private SharedObjectFactory<P, S> sharedObjectFactory;
 
     // Pooled entries.
     // @GuardedBy(lock)
@@ -27,16 +22,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
 
     // Read/write lock.
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
-
-
-    public void setPooledObjectFactory(PooledObjectFactory<K, P> factory) {
-        this.pooledObjectFactory = Objects.requireNonNull(factory);
-    }
-
-
-    public void setSharedObjectFactory(SharedObjectFactory<P, S> factory) {
-        this.sharedObjectFactory = Objects.requireNonNull(factory);
-    }
 
 
     @Override
@@ -56,7 +41,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
                 if (entrySharedCount >= 0) {
                     // The entry is already initialized. Just return a shared object.
                     return entry.createSharedObject();
-                } else if  (entrySharedCount == Entry.NEW) {
+                } else if (entrySharedCount == Entry.NEW) {
                     // The entry was just added to the pool either by this thread or by another thread.
                     // Since this thread synchronized on the entry first, we have to initialize it.
                     try {
@@ -145,16 +130,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
     }
 
 
-    protected P createPooledObject(K key) throws InvalidKeyException {
-        return this.pooledObjectFactory.create(key);
-    }
-
-
-    protected S createSharedObject(P pooledObject, Runnable disposeCallback) {
-        return this.sharedObjectFactory.createShared(pooledObject, disposeCallback);
-    }
-
-
     private void offerDisposeEntry(Entry entry) {
         Lock entryWriteLock = entry.writeLock();
         entryWriteLock.lock();
@@ -204,6 +179,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
 
 
     private class Entry {
+
         // This entry is not initialized yet.
         public static final int NEW = -1;
 
@@ -255,7 +231,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
                 ensureNew();
 
                 try {
-                    this.pooledObject.init();
+                    LockingSharedObjectPool.this.initializePooledObject(this.pooledObject);
                     this.sharedCount = 0;
                 } catch (Exception ex) {
                     // An attempt to initialize this entry failed. Mark the entry as disposed and re-throw the exception.
@@ -274,7 +250,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P extends Pooled
             try {
                 ensureActive();
 
-                this.pooledObject.dispose();
+                LockingSharedObjectPool.this.disposePooledObject(this.pooledObject);
                 this.sharedCount = DISPOSED;
             } finally {
                 entryWriteLock.unlock();

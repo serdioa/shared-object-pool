@@ -1,6 +1,6 @@
 package de.serdioa.common.pool;
 
 
-public interface SharedObjectFactory<P extends PooledObject, S extends SharedObject> {
+public interface SharedObjectFactory<P, S extends SharedObject> {
     S createShared(P pooledObject, Runnable disposeCallback);
 }

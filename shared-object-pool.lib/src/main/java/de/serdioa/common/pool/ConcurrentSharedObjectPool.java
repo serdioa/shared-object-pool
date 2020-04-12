@@ -16,16 +16,9 @@ import org.slf4j.LoggerFactory;
 
 
 // Simple implementation using concurrent map.
-public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends PooledObject> implements
-        SharedObjectPool<K, S> {
+public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends AbstractSharedObjectPool<K, S, P> {
 
     private static final Logger logger = LoggerFactory.getLogger(ConcurrentSharedObjectPool.class);
-
-    // Factory for creating new pooled objects.
-    private PooledObjectFactory<K, P> pooledObjectFactory;
-
-    // Factory for creating shared objects from pooled objects.
-    private SharedObjectFactory<P, S> sharedObjectFactory;
 
     // Pooled entries.
     private final ConcurrentMap<K, Entry> entries = new ConcurrentHashMap<>();
@@ -53,16 +46,6 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
     }
 
 
-    public void setPooledObjectFactory(PooledObjectFactory<K, P> factory) {
-        this.pooledObjectFactory = Objects.requireNonNull(factory);
-    }
-
-
-    public void setSharedObjectFactory(SharedObjectFactory<P, S> factory) {
-        this.sharedObjectFactory = Objects.requireNonNull(factory);
-    }
-
-
     public void setDisposeUnusedEntries(boolean disposeUnusedEntries) {
         this.disposeUnusedEntries = disposeUnusedEntries;
     }
@@ -81,8 +64,8 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
     private void reapSharedObjects() {
         try {
             while (true) {
-                SharedObjectPhantomReference<?, ? extends S> ref
-                        = (SharedObjectPhantomReference<?, ? extends S>) this.sharedObjectsRefQueue.remove();
+                SharedObjectPhantomReference<?, ? extends S> ref =
+                        (SharedObjectPhantomReference<?, ? extends S>) this.sharedObjectsRefQueue.remove();
                 try {
                     ref.disposeIfRequired();
                 } catch (Exception ex) {
@@ -200,16 +183,6 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
     }
 
 
-    protected P createPooledObject(K key) throws InvalidKeyException {
-        return this.pooledObjectFactory.create(key);
-    }
-
-
-    protected S createSharedObject(P pooledObject, Runnable disposeCallback) {
-        return this.sharedObjectFactory.createShared(pooledObject, disposeCallback);
-    }
-
-
     private void offerDisposeEntry(Entry entry) {
         if (!this.disposeUnusedEntries) {
             // Fast track if disposing of unused entries is disabled.
@@ -294,8 +267,8 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
         // Phanom references on shared objects. Keeping phanom references on shared objects allows to find
         // shared objects which were not properly disposed of.
         // Key: dispose callback for a shared object (runnable), value: phantom reference on shared object.
-        private final ConcurrentMap<Object, SharedObjectPhantomReference<K, S>> sharedObjectPhantomRefs
-                = new ConcurrentHashMap<>();
+        private final ConcurrentMap<Object, SharedObjectPhantomReference<K, S>> sharedObjectPhantomRefs =
+                new ConcurrentHashMap<>();
 
         // Lock for lifecycle management.
         // Changing the lifecycle of this entry, that is executing init() and dispose(), requires exclusive ("write")
@@ -354,7 +327,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
                 assert (currentSharedCount == NEW);
 
                 try {
-                    this.pooledObject.init();
+                    ConcurrentSharedObjectPool.this.initializePooledObject(this.pooledObject);
                     this.sharedCount.set(0);
                 } catch (Exception ex) {
                     // An attempt to initialize this entry failed. Mark the entry as disposed and re-throw the exception.
@@ -382,7 +355,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
                 assert (currentSharedCount >= 0);
 
                 try {
-                    this.pooledObject.dispose();
+                    ConcurrentSharedObjectPool.this.disposePooledObject(this.pooledObject);
                 } catch (Exception ex) {
                     // An attempt to dispose of the pooled object failed. Log the exception, but otherwise proceed
                     // to remove the pooled object.
@@ -413,7 +386,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
                 // We have just ensured that this entry is active. Since we are holding the shared lock, the lifecycle
                 // of this entry can't change (it remains active as long the lock is not released), even though
                 // the number of shared objects may be changed by other threads which are also holding the shared lock.
-
+                //
                 // Get the next ID for the new shared object. IDs are just for logging, to investigate potential
                 // problems such as when a shared object is not properly disposed of.
                 final long sharedObjectId = this.sharedObjectIdGen.getAndIncrement();
@@ -422,8 +395,8 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
                 // constructed before the value is available. We may have used a 1-element array instead, but arrays
                 // of generic objects are not directly supported (casting is required etc), so using a simple helper
                 // class is more elegant.
-                final SharedObjectPhantomReferenceHolder<K, S> sharedObjectPhantomRefHolder
-                        = new SharedObjectPhantomReferenceHolder<>();
+                final SharedObjectPhantomReferenceHolder<K, S> sharedObjectPhantomRefHolder =
+                        new SharedObjectPhantomReferenceHolder<>();
 
                 // Create a callback for disposing the shared object directly, that is by invoking the dispose method.
                 Runnable disposeDirectCallback = () -> {
@@ -604,6 +577,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
 
 
     private static class SharedObjectPhantomReference<K, S extends SharedObject> extends PhantomReference<S> {
+
         // The key of the pooled object, and the ID of the shared object. Both are used only for logging.
         private final K key;
         private final long sharedObjectId;
@@ -689,6 +663,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P extends Poo
     // Simple mutable holder class. We may have used a 1-element array to hold the object, but arrays of generic
     // objects are not directly support and require casting, so a simple mutable object is more elegant.
     private static class SharedObjectPhantomReferenceHolder<K, S extends SharedObject> {
+
         public SharedObjectPhantomReference<K, S> ref;
     }
 }

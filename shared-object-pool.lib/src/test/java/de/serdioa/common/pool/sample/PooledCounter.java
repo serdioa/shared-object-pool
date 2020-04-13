@@ -33,7 +33,7 @@ public class PooledCounter implements Counter {
     }
 
 
-    public void init() throws InitializationException {
+    public void initialize() throws InitializationException {
         Lock writeLock = this.lock.writeLock();
         writeLock.lock();
         try {

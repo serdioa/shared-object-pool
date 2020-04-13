@@ -20,7 +20,7 @@ public class PooledCounterFactory implements PooledObjectFactory<String, PooledC
 
     @Override
     public void initialize(PooledCounter pooledObject) {
-        pooledObject.init();
+        pooledObject.initialize();
     }
 
 

@@ -10,9 +10,13 @@ import org.junit.Before;
 import org.junit.Test;
 
 
-public class LockingDynamicSharedObjectTest {
+/**
+ * Base class for unit tests for reflection-based implementation of a {@link SharedObject}.
+ */
+public abstract class AbstractSharedObjectTest {
 
-    private interface SharedCounter extends Counter, SharedObject {}
+    public interface SharedCounter extends Counter, SharedObject {
+    }
 
     private PooledCounter pooledCounter;
     private SharedCounter sharedCounter;
@@ -20,15 +24,19 @@ public class LockingDynamicSharedObjectTest {
     // Number of times the method dispose() was called on a shared counter.
     private int disposeCalled = 0;
 
+
     @Before
     public void setUp() {
         this.pooledCounter = new PooledCounter("AAA");
-        this.pooledCounter.init();
+        this.pooledCounter.initialize();
 
-        this.sharedCounter = LockingSharedObject.create(SharedCounter.class, this.pooledCounter, () -> {
+        this.sharedCounter = this.sharedObjectFactory().createShared(this.pooledCounter, () -> {
             this.disposeCalled++;
         });
     }
+
+
+    protected abstract SharedObjectFactory<PooledCounter, ? extends SharedCounter> sharedObjectFactory();
 
 
     @Test
@@ -40,12 +48,14 @@ public class LockingDynamicSharedObjectTest {
     @Test
     public void testIncrement() {
         assertEquals(1, this.sharedCounter.increment());
+        assertEquals(1, this.sharedCounter.get());
     }
 
 
     @Test
     public void testDecrement() {
         assertEquals(-1, this.sharedCounter.decrement());
+        assertEquals(-1, this.sharedCounter.get());
     }
 
 

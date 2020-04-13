@@ -34,12 +34,12 @@ public class DynamicSharedObjectBenchmark {
     @Setup
     public void setup() {
         this.pooledCounter = new PooledCounter("AAA");
-        this.pooledCounter.init();
+        this.pooledCounter.initialize();
 
         this.sharedCounter = new LockingSharedCounter(this.pooledCounter, () -> {});
 
-        this.lockingDynamicSharedCounter = LockingSharedObject.create(DynamicSharedCounter.class,
-                this.pooledCounter, () -> {});
+        this.lockingDynamicSharedCounter = LockingSharedObject.factory(DynamicSharedCounter.class)
+                .createShared(this.pooledCounter, () -> {});
     }
 
 

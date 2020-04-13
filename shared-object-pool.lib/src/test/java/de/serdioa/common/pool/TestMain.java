@@ -18,7 +18,7 @@ public class TestMain {
     public void run_1() throws Exception {
         PooledCounterFactory pdcf = new PooledCounterFactory();
         PooledCounter pdc = pdcf.create("AAA");
-        pdc.init();
+        pdc.initialize();
 
         LockingSharedCounter sdc = new LockingSharedCounter(pdc, () -> {
            System.out.println("Dispose callback called from SharedCounter[AAA]");

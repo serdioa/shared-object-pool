@@ -31,7 +31,7 @@ import org.openjdk.jmh.runner.options.TimeValue;
 public class SharedCounterBenchmark {
 
     public static interface SharedCounter extends Counter, SharedObject {
-    };
+    }
 
 
     public static abstract class AbstractState {

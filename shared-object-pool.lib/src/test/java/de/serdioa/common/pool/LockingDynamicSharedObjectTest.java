@@ -25,7 +25,7 @@ public class LockingDynamicSharedObjectTest {
         this.pooledCounter = new PooledCounter("AAA");
         this.pooledCounter.init();
 
-        this.sharedCounter = LockingDynamicSharedObject.create(SharedCounter.class, this.pooledCounter, () -> {
+        this.sharedCounter = LockingSharedObject.create(SharedCounter.class, this.pooledCounter, () -> {
             this.disposeCalled++;
         });
     }

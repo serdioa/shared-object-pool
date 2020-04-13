@@ -4,8 +4,7 @@ import java.util.concurrent.TimeUnit;
 
 import de.serdioa.common.pool.sample.PooledCounter;
 import de.serdioa.common.pool.sample.PooledCounterFactory;
-import de.serdioa.common.pool.sample.SharedCounter;
-import de.serdioa.common.pool.sample.SharedCounterFactory;
+import de.serdioa.common.pool.sample.LockingSharedCounter;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Mode;
@@ -28,13 +27,13 @@ import org.openjdk.jmh.runner.options.TimeValue;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 @State(Scope.Benchmark)
 public class SynchronizedSharedObjectPoolBenchmark_01 {
-    private SynchronizedSharedObjectPool<String, SharedCounter, PooledCounter> pool;
+    private SynchronizedSharedObjectPool<String, LockingSharedCounter, PooledCounter> pool;
 
     @Setup
     public void setup() {
         this.pool = new SynchronizedSharedObjectPool<>();
         this.pool.setPooledObjectFactory(new PooledCounterFactory());
-        this.pool.setSharedObjectFactory(new SharedCounterFactory());
+        this.pool.setSharedObjectFactory(LockingSharedCounter::new);
     }
 
 
@@ -46,7 +45,7 @@ public class SynchronizedSharedObjectPoolBenchmark_01 {
 
     @Benchmark
     public int measureGet() {
-        SharedCounter counter = this.pool.get("AAA");
+        LockingSharedCounter counter = this.pool.get("AAA");
         int value = counter.get();
         counter.dispose();
         return value;
@@ -55,7 +54,7 @@ public class SynchronizedSharedObjectPoolBenchmark_01 {
 
     @Benchmark
     public int measureIncrement() {
-        SharedCounter counter = this.pool.get("AAA");
+        LockingSharedCounter counter = this.pool.get("AAA");
         int value = counter.increment();
         counter.dispose();
         return value;

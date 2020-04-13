@@ -12,9 +12,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
-public class LockingDynamicSharedObject implements InvocationHandler {
+public class LockingSharedObject implements InvocationHandler {
 
-    private static final Logger logger = LoggerFactory.getLogger(LockingDynamicSharedObject.class);
+    private static final Logger logger = LoggerFactory.getLogger(LockingSharedObject.class);
 
     private static final String DISPOSE_METHOD_NAME = "dispose";
     private static final String IS_DISPOSED_METHOD_NAME = "isDisposed";
@@ -25,7 +25,7 @@ public class LockingDynamicSharedObject implements InvocationHandler {
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
 
-    public LockingDynamicSharedObject(Object pooledObject, Runnable disposeCallback) {
+    public LockingSharedObject(Object pooledObject, Runnable disposeCallback) {
         // Use the lock to ensure proper visibility of this.pooledObject.
         Lock writeLock = this.lock.writeLock();
         writeLock.lock();
@@ -107,7 +107,7 @@ public class LockingDynamicSharedObject implements InvocationHandler {
 
     @SuppressWarnings("unchecked")
     public static <S extends SharedObject, P> S create(Class<S> type, P pooledObject, Runnable disposeCallback) {
-        LockingDynamicSharedObject invocationHandler = new LockingDynamicSharedObject(pooledObject, disposeCallback);
+        LockingSharedObject invocationHandler = new LockingSharedObject(pooledObject, disposeCallback);
         return (S) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, invocationHandler);
     }
 }

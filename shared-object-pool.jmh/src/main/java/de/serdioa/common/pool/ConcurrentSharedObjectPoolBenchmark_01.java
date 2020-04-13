@@ -5,8 +5,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import de.serdioa.common.pool.sample.PooledCounter;
 import de.serdioa.common.pool.sample.PooledCounterFactory;
-import de.serdioa.common.pool.sample.SharedCounter;
-import de.serdioa.common.pool.sample.SharedCounterFactory;
+import de.serdioa.common.pool.sample.LockingSharedCounter;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Level;
@@ -31,7 +30,7 @@ import org.openjdk.jmh.runner.options.TimeValue;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 @State(Scope.Benchmark)
 public class ConcurrentSharedObjectPoolBenchmark_01 {
-    private ConcurrentSharedObjectPool<String, SharedCounter, PooledCounter> pool;
+    private ConcurrentSharedObjectPool<String, LockingSharedCounter, PooledCounter> pool;
 
     @Param({"true"})
     private boolean disposeUnusedEntries;
@@ -44,7 +43,7 @@ public class ConcurrentSharedObjectPoolBenchmark_01 {
 
         this.pool = new ConcurrentSharedObjectPool<>();
         this.pool.setPooledObjectFactory(new PooledCounterFactory());
-        this.pool.setSharedObjectFactory(new SharedCounterFactory());
+        this.pool.setSharedObjectFactory(LockingSharedCounter::new);
         this.pool.setDisposeUnusedEntries(this.disposeUnusedEntries);
     }
 
@@ -60,7 +59,7 @@ public class ConcurrentSharedObjectPoolBenchmark_01 {
 
     @Benchmark
     public int measureGet() {
-        SharedCounter counter = this.pool.get("AAA");
+        LockingSharedCounter counter = this.pool.get("AAA");
         int value = counter.get();
         counter.dispose();
         return value;
@@ -71,7 +70,7 @@ public class ConcurrentSharedObjectPoolBenchmark_01 {
     public int measureGetUniqueKey() {
         long i = this.index.getAndIncrement();
 
-        SharedCounter counter = this.pool.get(String.valueOf(i));
+        LockingSharedCounter counter = this.pool.get(String.valueOf(i));
         int value = counter.get();
         counter.dispose();
         return value;

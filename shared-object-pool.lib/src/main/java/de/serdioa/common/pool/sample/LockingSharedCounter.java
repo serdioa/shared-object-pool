@@ -11,8 +11,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
-public class SharedCounter implements Counter, SharedObject {
-    private static final Logger logger = LoggerFactory.getLogger(SharedCounter.class);
+public class LockingSharedCounter implements Counter, SharedObject {
+    private static final Logger logger = LoggerFactory.getLogger(LockingSharedCounter.class);
 
     private final String key;
     private final PooledCounter pooledCounter;
@@ -25,7 +25,7 @@ public class SharedCounter implements Counter, SharedObject {
 
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
-    SharedCounter(PooledCounter pooledCounter, Runnable disposeCallback) {
+    public LockingSharedCounter(PooledCounter pooledCounter, Runnable disposeCallback) {
         this.pooledCounter = Objects.requireNonNull(pooledCounter);
         this.disposeCallback = Objects.requireNonNull(disposeCallback);
         this.key = this.pooledCounter.getKey();

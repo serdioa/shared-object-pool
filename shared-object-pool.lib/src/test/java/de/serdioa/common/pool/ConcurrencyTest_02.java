@@ -5,26 +5,26 @@ import java.util.concurrent.CountDownLatch;
 
 import de.serdioa.common.pool.sample.PooledCounter;
 import de.serdioa.common.pool.sample.PooledCounterFactory;
-import de.serdioa.common.pool.sample.SharedCounter;
-import de.serdioa.common.pool.sample.SharedCounterFactory;
+import de.serdioa.common.pool.sample.LockingSharedCounter;
 
 
 // Test for LockingSharedObjectPool.
 public class ConcurrencyTest_02 {
-    public static void main(String [] args) throws Exception {
+
+    public static void main(String[] args) throws Exception {
         new ConcurrencyTest_02().run();
     }
-
 
     private static final int THREADS_COUNT = 16;
     private static final int ITERATIONS = 1000000;
     private static final int BUCKETS = 1000;
-    private final LockingSharedObjectPool<String, SharedCounter, PooledCounter> pool;
+    private final LockingSharedObjectPool<String, LockingSharedCounter, PooledCounter> pool;
+
 
     public ConcurrencyTest_02() {
         this.pool = new LockingSharedObjectPool<>();
         this.pool.setPooledObjectFactory(new PooledCounterFactory());
-        this.pool.setSharedObjectFactory(new SharedCounterFactory());
+        this.pool.setSharedObjectFactory(LockingSharedCounter::new);
     }
 
 
@@ -32,16 +32,25 @@ public class ConcurrencyTest_02 {
         CountDownLatch startLatch = new CountDownLatch(1);
         CountDownLatch endLatch = new CountDownLatch(THREADS_COUNT);
 
-        TestRunner [] runners = new TestRunner[THREADS_COUNT];
-        Thread [] threads = new Thread[THREADS_COUNT];
+        TestRunner[] runners = new TestRunner[THREADS_COUNT];
+        Thread[] threads = new Thread[THREADS_COUNT];
         for (int i = 0; i < THREADS_COUNT; ++i) {
             String key;
             switch (i % 4) {
-                case 0: key = "AAA"; break;
-                case 1: key = "BBB"; break;
-                case 2: key = "CCC"; break;
-                case 3: key = "DDD"; break;
-                default: key = "unexpected";
+                case 0:
+                    key = "AAA";
+                    break;
+                case 1:
+                    key = "BBB";
+                    break;
+                case 2:
+                    key = "CCC";
+                    break;
+                case 3:
+                    key = "DDD";
+                    break;
+                default:
+                    key = "unexpected";
             }
 
             String name = key + "_" + i;
@@ -66,16 +75,18 @@ public class ConcurrencyTest_02 {
 
 
     private static class TestRunner implements Runnable {
+
         private final String name;
-        private final SharedObjectPool<String, SharedCounter> pool;
+        private final SharedObjectPool<String, LockingSharedCounter> pool;
         private final String key;
         private final CountDownLatch startLatch;
         private final CountDownLatch endLatch;
 
-        private final int [] statistics = new int[BUCKETS];
+        private final int[] statistics = new int[BUCKETS];
         private int maxCount = -1;
 
-        TestRunner(String name, SharedObjectPool<String, SharedCounter> pool, String key,
+
+        TestRunner(String name, SharedObjectPool<String, LockingSharedCounter> pool, String key,
                 CountDownLatch startLatch, CountDownLatch endLatch) {
             this.name = name;
             this.pool = pool;
@@ -90,7 +101,7 @@ public class ConcurrencyTest_02 {
         }
 
 
-        public int [] getStatistics() {
+        public int[] getStatistics() {
             return this.statistics;
         }
 
@@ -114,7 +125,7 @@ public class ConcurrencyTest_02 {
 
 
         private void runIteration() {
-            SharedCounter counter = this.pool.get(this.key);
+            LockingSharedCounter counter = this.pool.get(this.key);
             int count = counter.increment();
             counter.dispose();
 

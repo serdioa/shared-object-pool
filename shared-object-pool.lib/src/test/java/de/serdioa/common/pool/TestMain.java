@@ -1,8 +1,7 @@
 package de.serdioa.common.pool;
 
 import de.serdioa.common.pool.sample.PooledCounterFactory;
-import de.serdioa.common.pool.sample.SharedCounterFactory;
-import de.serdioa.common.pool.sample.SharedCounter;
+import de.serdioa.common.pool.sample.LockingSharedCounter;
 import de.serdioa.common.pool.sample.PooledCounter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,8 +20,7 @@ public class TestMain {
         PooledCounter pdc = pdcf.create("AAA");
         pdc.init();
 
-        SharedCounterFactory sdcf = new SharedCounterFactory();
-        SharedCounter sdc = sdcf.createShared(pdc, () -> {
+        LockingSharedCounter sdc = new LockingSharedCounter(pdc, () -> {
            System.out.println("Dispose callback called from SharedCounter[AAA]");
         });
 
@@ -50,20 +48,19 @@ public class TestMain {
 
     public void run() throws Exception {
         PooledCounterFactory pdcf = new PooledCounterFactory();
-        SharedCounterFactory sdcf = new SharedCounterFactory();
 
-        SynchronizedSharedObjectPool<String, SharedCounter, PooledCounter> pool
+        SynchronizedSharedObjectPool<String, LockingSharedCounter, PooledCounter> pool
                 = new SynchronizedSharedObjectPool<>();
         pool.setPooledObjectFactory(pdcf);
-        pool.setSharedObjectFactory(sdcf);
+        pool.setSharedObjectFactory(LockingSharedCounter::new);
 
         System.out.println("Getting AAA[1]");
-        SharedCounter aaa_1 = pool.get("AAA");
+        LockingSharedCounter aaa_1 = pool.get("AAA");
         System.out.println("AAA[1].get=" + aaa_1.get());
         System.out.println("AAA[1].increment=" + aaa_1.increment());
 
         System.out.println("Getting AAA[2]");
-        SharedCounter aaa_2 = pool.get("AAA");
+        LockingSharedCounter aaa_2 = pool.get("AAA");
         System.out.println("AAA[2].get=" + aaa_2.get());
         System.out.println("AAA[2].increment=" + aaa_2.increment());
 
@@ -74,7 +71,7 @@ public class TestMain {
         System.out.println("AAA[2].increment=" + aaa_2.increment());
 
         System.out.println("Getting BBB[1]");
-        SharedCounter bbb_1 = pool.get("BBB");
+        LockingSharedCounter bbb_1 = pool.get("BBB");
         System.out.println("BBB[1].get=" + bbb_1.get());
         System.out.println("BBB[1].increment=" + bbb_1.increment());
 

@@ -4,8 +4,7 @@ import java.util.concurrent.TimeUnit;
 
 import de.serdioa.common.pool.sample.Counter;
 import de.serdioa.common.pool.sample.PooledCounter;
-import de.serdioa.common.pool.sample.SharedCounter;
-import de.serdioa.common.pool.sample.SharedCounterFactory;
+import de.serdioa.common.pool.sample.LockingSharedCounter;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Mode;
@@ -28,7 +27,7 @@ public class DynamicSharedObjectBenchmark {
     private interface DynamicSharedCounter extends Counter, SharedObject {}
 
     private PooledCounter pooledCounter;
-    private SharedCounter sharedCounter;
+    private LockingSharedCounter sharedCounter;
     private DynamicSharedCounter lockingDynamicSharedCounter;
 
 
@@ -37,9 +36,9 @@ public class DynamicSharedObjectBenchmark {
         this.pooledCounter = new PooledCounter("AAA");
         this.pooledCounter.init();
 
-        this.sharedCounter = new SharedCounterFactory().createShared(this.pooledCounter, () -> {});
+        this.sharedCounter = new LockingSharedCounter(this.pooledCounter, () -> {});
 
-        this.lockingDynamicSharedCounter = LockingDynamicSharedObject.create(DynamicSharedCounter.class,
+        this.lockingDynamicSharedCounter = LockingSharedObject.create(DynamicSharedCounter.class,
                 this.pooledCounter, () -> {});
     }
 

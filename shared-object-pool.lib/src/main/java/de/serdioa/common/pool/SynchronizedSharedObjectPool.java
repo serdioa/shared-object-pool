@@ -21,6 +21,12 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
     private final Object lock = new Object();
 
 
+    private SynchronizedSharedObjectPool(PooledObjectFactory<K, P> pooledObjectFactory,
+            SharedObjectFactory<P, S> sharedObjectFactory) {
+        super(pooledObjectFactory, sharedObjectFactory);
+    }
+
+
     @Override
     public S get(K key) throws InvalidKeyException, InitializationException {
         while (true) {
@@ -206,7 +212,8 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
 
         synchronized S createSharedObject() {
             ensureActive();
-            S sharedObject = SynchronizedSharedObjectPool.this.createSharedObject(this.pooledObject, this::disposeSharedObject);
+            S sharedObject = SynchronizedSharedObjectPool.this
+                    .createSharedObject(this.pooledObject, this::disposeSharedObject);
 
             this.sharedCount++;
             return sharedObject;
@@ -259,6 +266,40 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
             if (this.sharedCount == DISPOSED) {
                 throw new IllegalStateException("Entry is already disposed of");
             }
+        }
+    }
+
+
+    public static class Builder<K, S extends SharedObject, P> {
+
+        // Factory for creating new pooled objects.
+        protected PooledObjectFactory<K, P> pooledObjectFactory;
+
+        // Factory for creating shared objects from pooled objects.
+        protected SharedObjectFactory<P, S> sharedObjectFactory;
+
+
+        public Builder<K, S, P> setPooledObjectFactory(PooledObjectFactory<K, P> pooledObjectFactory) {
+            this.pooledObjectFactory = pooledObjectFactory;
+            return this;
+        }
+
+
+        public Builder<K, S, P> setSharedObjectFactory(SharedObjectFactory<P, S> sharedObjectFactory) {
+            this.sharedObjectFactory = sharedObjectFactory;
+            return this;
+        }
+
+
+        public SynchronizedSharedObjectPool<K, S, P> build() {
+            if (this.pooledObjectFactory == null) {
+                throw new IllegalStateException("pooledObjectFactory is required");
+            }
+            if (this.sharedObjectFactory == null) {
+                throw new IllegalStateException("sharedObjectFactory is required");
+            }
+
+            return new SynchronizedSharedObjectPool<>(this.pooledObjectFactory, this.sharedObjectFactory);
         }
     }
 }

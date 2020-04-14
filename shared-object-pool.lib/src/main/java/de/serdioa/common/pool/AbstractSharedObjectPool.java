@@ -1,22 +1,21 @@
 package de.serdioa.common.pool;
 
+import java.util.Objects;
+
 
 public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P> implements SharedObjectPool<K, S> {
 
     // Factory for creating new pooled objects.
-    private PooledObjectFactory<K, P> pooledObjectFactory;
+    private final PooledObjectFactory<K, P> pooledObjectFactory;
 
     // Factory for creating shared objects from pooled objects.
-    private SharedObjectFactory<P, S> sharedObjectFactory;
+    private final SharedObjectFactory<P, S> sharedObjectFactory;
 
 
-    public void setPooledObjectFactory(PooledObjectFactory<K, P> pooledObjectFactory) {
-        this.pooledObjectFactory = pooledObjectFactory;
-    }
-
-
-    public void setSharedObjectFactory(SharedObjectFactory<P, S> sharedObjectFactory) {
-        this.sharedObjectFactory = sharedObjectFactory;
+    protected AbstractSharedObjectPool(PooledObjectFactory<K, P> pooledObjectFactory,
+            SharedObjectFactory<P, S> sharedObjectFactory) {
+        this.pooledObjectFactory = Objects.requireNonNull(pooledObjectFactory);
+        this.sharedObjectFactory = Objects.requireNonNull(sharedObjectFactory);
     }
 
 

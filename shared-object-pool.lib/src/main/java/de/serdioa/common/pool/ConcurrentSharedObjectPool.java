@@ -31,13 +31,16 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     private final ReferenceQueue<S> sharedObjectsRefQueue = new ReferenceQueue<>();
 
     // The thread processing phantom references on shared objects claimed by the GC.
+    // @GuardedBy(this.lifecycleMonitor)
     private Thread sharedObjectsRipper;
 
     // The synchronization lock for lifecycle events (startup / shutdown).
     private final Object lifecycleMonitor = new Object();
 
 
-    public ConcurrentSharedObjectPool() {
+    private ConcurrentSharedObjectPool(PooledObjectFactory<K, P> pooledObjectFactory,
+            SharedObjectFactory<P, S> sharedObjectFactory) {
+        super(pooledObjectFactory, sharedObjectFactory);
         synchronized (this.lifecycleMonitor) {
             this.sharedObjectsRipper = new Thread(this::reapSharedObjects, this.getClass().getName() + "-ripper");
             this.sharedObjectsRipper.setDaemon(true);
@@ -665,5 +668,39 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     private static class SharedObjectPhantomReferenceHolder<K, S extends SharedObject> {
 
         public SharedObjectPhantomReference<K, S> ref;
+    }
+
+
+    public static class Builder<K, S extends SharedObject, P> {
+
+        // Factory for creating new pooled objects.
+        protected PooledObjectFactory<K, P> pooledObjectFactory;
+
+        // Factory for creating shared objects from pooled objects.
+        protected SharedObjectFactory<P, S> sharedObjectFactory;
+
+
+        public Builder<K, S, P> setPooledObjectFactory(PooledObjectFactory<K, P> pooledObjectFactory) {
+            this.pooledObjectFactory = pooledObjectFactory;
+            return this;
+        }
+
+
+        public Builder<K, S, P> setSharedObjectFactory(SharedObjectFactory<P, S> sharedObjectFactory) {
+            this.sharedObjectFactory = sharedObjectFactory;
+            return this;
+        }
+
+
+        public ConcurrentSharedObjectPool<K, S, P> build() {
+            if (this.pooledObjectFactory == null) {
+                throw new IllegalStateException("pooledObjectFactory is required");
+            }
+            if (this.sharedObjectFactory == null) {
+                throw new IllegalStateException("sharedObjectFactory is required");
+            }
+
+            return new ConcurrentSharedObjectPool<>(this.pooledObjectFactory, this.sharedObjectFactory);
+        }
     }
 }

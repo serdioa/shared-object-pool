@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Hand-written implementation of the {@link SharedObject} for {@link Counter} based on synchronization.
  */
-public class SynchronizedSharedCounter implements Counter, SharedObject {
+public class SynchronizedSharedCounter implements SharedCounter {
 
     private static final Logger logger = LoggerFactory.getLogger(SynchronizedSharedCounter.class);
 

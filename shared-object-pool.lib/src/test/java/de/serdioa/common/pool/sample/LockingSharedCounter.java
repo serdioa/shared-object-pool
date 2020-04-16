@@ -14,7 +14,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Hand-written implementation of the {@link SharedObject} for {@link Counter} based on locks.
  */
-public class LockingSharedCounter implements Counter, SharedObject {
+public class LockingSharedCounter implements SharedCounter {
     private static final Logger logger = LoggerFactory.getLogger(LockingSharedCounter.class);
 
     private final String key;

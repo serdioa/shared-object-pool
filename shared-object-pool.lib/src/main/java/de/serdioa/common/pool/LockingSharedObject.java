@@ -23,25 +23,31 @@ public class LockingSharedObject implements InvocationHandler {
     private static final String DISPOSE_METHOD_NAME = "dispose";
     private static final String IS_DISPOSED_METHOD_NAME = "isDisposed";
 
-    // @GuardedBy(this.lock)
-    private Object pooledObject;
-
+    private final Object pooledObject;
     private final Runnable disposeCallback;
+
+    // We do not really require the shared object (a proxy based on this invocation handler), but we keep a reference
+    // on it to prevent it from being garbage collected before the dispose callback is executed.
+    //
+    // If the shared object pool tracks how shared objects are disposed, and has a protection against forgetting
+    // to properly dispose of a shared object by tracking when a shared object is GC'ed, it causes a false positive
+    // when a shared object is GC'ed before this invocation handler finished executing the dispose callback. To prevent
+    // a false positive, we keep a reference on the shared object until this invocation handler is disposed of.
+    //
+    // In addition, sharedObject == null is used as an indicator that this invocation handler has been disposed of.
+    // We may have used an additional boolean variables, but there is no advantage in doing so if we have to keep
+    // a reference on the shared object anyway.
+    //
+    // @GuardedBy(lock)
+    private Object sharedObject;
 
     // Synchronization lock for the lifecycle and accessing the pooled object.
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
 
     public LockingSharedObject(Object pooledObject, Runnable disposeCallback) {
-        // Use the lock to ensure proper visibility of this.pooledObject.
-        Lock writeLock = this.lock.writeLock();
-        writeLock.lock();
-        try {
-            this.pooledObject = Objects.requireNonNull(pooledObject);
-            this.disposeCallback = Objects.requireNonNull(disposeCallback);
-        } finally {
-            writeLock.unlock();
-        }
+        this.pooledObject = Objects.requireNonNull(pooledObject);
+        this.disposeCallback = Objects.requireNonNull(disposeCallback);
     }
 
 
@@ -71,7 +77,7 @@ public class LockingSharedObject implements InvocationHandler {
         Lock readLock = this.lock.readLock();
         readLock.lock();
         try {
-            if (this.pooledObject == null) {
+            if (this.sharedObject == null) {
                 throw new IllegalStateException("Method called on disposed dynamic shared object: " + method);
             }
 
@@ -88,7 +94,7 @@ public class LockingSharedObject implements InvocationHandler {
         Lock writeLock = this.lock.writeLock();
         writeLock.lock();
         try {
-            if (this.pooledObject == null) {
+            if (this.sharedObject == null) {
                 throw new IllegalStateException("Method dispose() called on already disposed dynamic shared object");
             }
 
@@ -99,7 +105,8 @@ public class LockingSharedObject implements InvocationHandler {
                         + this.pooledObject);
             }
 
-            this.pooledObject = null;
+            // Mark this invocation handler as disposed, and allow to GC the shared object proxy.
+            this.sharedObject = null;
         } finally {
             writeLock.unlock();
         }
@@ -112,9 +119,21 @@ public class LockingSharedObject implements InvocationHandler {
         Lock readLock = this.lock.readLock();
         readLock.lock();
         try {
-            return (this.pooledObject == null);
+            return (this.sharedObject == null);
         } finally {
             readLock.unlock();
+        }
+    }
+
+
+    private void setSharedObject(Object sharedObject) {
+        // Using writeLock (exclusive lock) to prevent parallel lifecycle events and/or usage of this shared object.
+        Lock writeLock = this.lock.writeLock();
+        writeLock.lock();
+        try {
+            this.sharedObject = sharedObject;
+        } finally {
+            writeLock.unlock();
         }
     }
 
@@ -122,7 +141,9 @@ public class LockingSharedObject implements InvocationHandler {
     @SuppressWarnings("unchecked")
     private static <S extends SharedObject, P> S create(Class<? extends S> type, P pooledObject, Runnable disposeCallback) {
         LockingSharedObject invocationHandler = new LockingSharedObject(pooledObject, disposeCallback);
-        return (S) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, invocationHandler);
+        S sharedObject = (S) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, invocationHandler);
+        invocationHandler.setSharedObject(sharedObject);
+        return sharedObject;
     }
 
 

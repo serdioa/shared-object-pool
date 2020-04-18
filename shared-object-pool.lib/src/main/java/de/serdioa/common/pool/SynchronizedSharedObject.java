@@ -19,20 +19,31 @@ public class SynchronizedSharedObject implements InvocationHandler {
     private static final String DISPOSE_METHOD_NAME = "dispose";
     private static final String IS_DISPOSED_METHOD_NAME = "isDisposed";
 
-    // @GuardedBy(this.mutex)
-    private Object pooledObject;
+    private final Object pooledObject;
     private final Runnable disposeCallback;
+
+    // We do not really require the shared object (a proxy based on this invocation handler), but we keep a reference
+    // on it to prevent it from being garbage collected before the dispose callback is executed.
+    //
+    // If the shared object pool tracks how shared objects are disposed, and has a protection against forgetting
+    // to properly dispose of a shared object by tracking when a shared object is GC'ed, it causes a false positive
+    // when a shared object is GC'ed before this invocation handler finished executing the dispose callback. To prevent
+    // a false positive, we keep a reference on the shared object until this invocation handler is disposed of.
+    //
+    // In addition, sharedObject == null is used as an indicator that this invocation handler has been disposed of.
+    // We may have used an additional boolean variables, but there is no advantage in doing so if we have to keep
+    // a reference on the shared object anyway.
+    //
+    // @GuardedBy(mutex)
+    private Object sharedObject;
 
     // Synchronization lock for the lifecycle and accessing the pooled object.
     private final Object mutex = new Object();
 
 
     public SynchronizedSharedObject(Object pooledObject, Runnable disposeCallback) {
-        // Use the lock to ensure proper visibility of this.pooledObject.
-        synchronized (this.mutex) {
-            this.pooledObject = Objects.requireNonNull(pooledObject);
-            this.disposeCallback = Objects.requireNonNull(disposeCallback);
-        }
+        this.pooledObject = Objects.requireNonNull(pooledObject);
+        this.disposeCallback = Objects.requireNonNull(disposeCallback);
     }
 
 
@@ -56,7 +67,7 @@ public class SynchronizedSharedObject implements InvocationHandler {
 
     private Object invokePooled(Method method, Object[] args) throws Throwable {
         synchronized (this.mutex) {
-            if (this.pooledObject == null) {
+            if (this.sharedObject == null) {
                 throw new IllegalStateException("Method called on disposed dynamic shared object: " + method);
             }
 
@@ -67,7 +78,7 @@ public class SynchronizedSharedObject implements InvocationHandler {
 
     private void dispose() {
         synchronized (this.mutex) {
-            if (this.pooledObject == null) {
+            if (this.sharedObject == null) {
                 throw new IllegalStateException("Method dispose() called on already disposed dynamic shared object");
             }
 
@@ -78,14 +89,22 @@ public class SynchronizedSharedObject implements InvocationHandler {
                         + this.pooledObject);
             }
 
-            this.pooledObject = null;
+            // Mark this invocation handler as disposed, and allow to GC the shared object proxy.
+            this.sharedObject = null;
         }
     }
 
 
     private boolean isDisposed() {
         synchronized (this.mutex) {
-            return (this.pooledObject == null);
+            return (this.sharedObject == null);
+        }
+    }
+
+
+    private void setSharedObject(Object sharedObject) {
+        synchronized (this.mutex) {
+            this.sharedObject = sharedObject;
         }
     }
 
@@ -93,7 +112,10 @@ public class SynchronizedSharedObject implements InvocationHandler {
     @SuppressWarnings("unchecked")
     private static <S extends SharedObject, P> S create(Class<? extends S> type, P pooledObject, Runnable disposeCallback) {
         SynchronizedSharedObject invocationHandler = new SynchronizedSharedObject(pooledObject, disposeCallback);
-        return (S) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, invocationHandler);
+        S sharedObject = (S) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, invocationHandler);
+        invocationHandler.setSharedObject(sharedObject);
+
+        return sharedObject;
     }
 
 

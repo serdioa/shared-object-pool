@@ -41,7 +41,7 @@ public class Configuration {
     public static Configuration fromProperties(Properties properties) {
         PoolType poolType = getEnumProperty(properties, PROP_POOL_TYPE, PoolType.class, PoolType.CONCURRENT);
         ObjectType objectType =
-                getEnumProperty(properties, PROP_OBJECT_TYPE, ObjectType.class, ObjectType.REFLECTION_SYNCHRONIZED);
+                getEnumProperty(properties, PROP_OBJECT_TYPE, ObjectType.class, ObjectType.REFLECTION_LOCKING);
         int threads = getIntProperty(properties, PROP_THREADS, 4);
         int objects = getIntProperty(properties, PROP_OBJECTS, 4);
         long runMillis = getLongProperty(properties, PROP_RUN_MILLIS, 10_000L);

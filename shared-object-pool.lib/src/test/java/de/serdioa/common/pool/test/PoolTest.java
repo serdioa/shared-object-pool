@@ -1,5 +1,6 @@
 package de.serdioa.common.pool.test;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
@@ -98,15 +99,16 @@ public class PoolTest {
 
     private SharedObjectFactory<PooledCounter, SharedCounter> buildSharedObjectFactory() {
         final ObjectType objectType = PoolTest.this.config.getObjectType();
+
         switch (objectType) {
-            case SYNCHRONIZED:
-                return SynchronizedSharedCounter::new;
             case LOCKING:
                 return LockingSharedCounter::new;
+            case SYNCHRONIZED:
+                return SynchronizedSharedCounter::new;
             case REFLECTION_LOCKING:
-                return SynchronizedSharedObject.factory(SharedCounter.class);
-            case REFLECTION_SYNCHRONIZED:
                 return LockingSharedObject.factory(SharedCounter.class);
+            case REFLECTION_SYNCHRONIZED:
+                return SynchronizedSharedObject.factory(SharedCounter.class);
             default:
                 throw new IllegalArgumentException("Unexpected object type: " + objectType);
         }
@@ -223,6 +225,7 @@ public class PoolTest {
 
         private final int objectsCount = PoolTest.this.config.getObjects();
 
+        private final int[] totalValues = new int[this.objectsCount];
         private final int[] observedValues = new int[this.objectsCount];
         private final int[] observedGenerations = new int[this.objectsCount];
 
@@ -255,7 +258,12 @@ public class PoolTest {
                 // Indicate that this worker is finished.
                 this.stopLatch.countDown();
 
-                System.out.println("Worker " + this.id + " stopped");
+                StringBuilder sb = new StringBuilder("Worker ").append(this.id).append(" stopped\n");
+                sb.append("    observedGenerations=").append(Arrays.toString(this.observedGenerations)).append("\n");
+                sb.append("    observedValues=").append(Arrays.toString(this.observedValues)).append("\n");
+                sb.append("    totalValues=").append(Arrays.toString(this.totalValues)).append("\n");
+
+                System.out.println(sb);
             }
         }
 
@@ -292,6 +300,7 @@ public class PoolTest {
             }
 
             // Update observed values.
+            this.totalValues[index]++;
             this.observedValues[index] = value;
             this.observedGenerations[index] = generation;
         }

@@ -46,7 +46,7 @@ public class SynchronizedSharedCounter implements SharedCounter {
 
                 // This code actually never executes, but since dummy is volatile, JVM can't optimize it away
                 // and can't GC this object before the disposeCallback() above is finished.
-                if (dummy) {
+                if (this.dummy) {
                     this.get();
                 }
             } else {

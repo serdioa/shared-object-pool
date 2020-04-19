@@ -16,9 +16,9 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
-            <version>1.7.25</version>
+            <version>1.7.30</version>
         </dependency>
-        
+
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-simple</artifactId>
@@ -61,7 +61,7 @@
                         </compilerArgs>
                     </configuration>
                 </plugin>
-                
+
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-jar-plugin</artifactId>
@@ -73,7 +73,7 @@
                             </goals>
                         </execution>
                     </executions>
-                </plugin>                
+                </plugin>
             </plugins>
         </pluginManagement>
     </build>

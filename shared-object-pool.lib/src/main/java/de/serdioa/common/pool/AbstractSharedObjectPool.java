@@ -19,6 +19,9 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P> imp
     }
 
 
+    public void dispose() {}
+
+
     protected P createPooledObject(K key) throws InvalidKeyException {
         return this.pooledObjectFactory.create(key);
     }

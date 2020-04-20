@@ -54,6 +54,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     }
 
 
+    @Override
     public void dispose() {
         synchronized (this.lifecycleMonitor) {
             if (this.sharedObjectsRipper != null) {

@@ -11,15 +11,22 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P> imp
     // Factory for creating shared objects from pooled objects.
     private final SharedObjectFactory<P, S> sharedObjectFactory;
 
+    // The policy for evicting non-used pooled objects.
+    protected final EvictionPolicy evictionPolicy;
+
 
     protected AbstractSharedObjectPool(PooledObjectFactory<K, P> pooledObjectFactory,
-            SharedObjectFactory<P, S> sharedObjectFactory) {
+            SharedObjectFactory<P, S> sharedObjectFactory,
+            EvictionPolicy evictionPolicy) {
         this.pooledObjectFactory = Objects.requireNonNull(pooledObjectFactory);
         this.sharedObjectFactory = Objects.requireNonNull(sharedObjectFactory);
+        this.evictionPolicy = Objects.requireNonNull(evictionPolicy);
     }
 
 
-    public void dispose() {}
+    public void dispose() {
+        this.evictionPolicy.dispose();
+    }
 
 
     protected P createPooledObject(K key) throws InvalidKeyException {

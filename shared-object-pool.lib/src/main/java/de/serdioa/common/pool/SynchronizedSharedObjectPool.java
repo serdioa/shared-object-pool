@@ -22,8 +22,9 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
 
 
     private SynchronizedSharedObjectPool(PooledObjectFactory<K, P> pooledObjectFactory,
-            SharedObjectFactory<P, S> sharedObjectFactory) {
-        super(pooledObjectFactory, sharedObjectFactory);
+            SharedObjectFactory<P, S> sharedObjectFactory,
+            EvictionPolicy evictionPolicy) {
+        super(pooledObjectFactory, sharedObjectFactory, evictionPolicy);
     }
 
 
@@ -110,7 +111,22 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
     }
 
 
-    private void offerDisposeEntry(Entry entry) {
+    // Entry offer the pool to dispose of itself.
+    // It is up to the eviction policy to decide if the offer to be accepted immediately, or to dispose of the entry
+    // later.
+    // If the eviction policy decides to postpone, it may happens that in the meantime the entry will be re-used
+    // and not anymore eligible to disposal when the eviction policy decided to do so.
+    private void entryOfferDispose(Entry entry) {
+        Cancellable evictionCancellable = this.evictionPolicy.evict(() -> this.evictionPolicyOfferDispose(entry));
+
+        // TODO: store evictionCancellable in Entry, and make sure Entry cancels it if it is not immediately
+        // disposed of, and in the meantime becomes non-eligible for a disposal.
+    }
+
+
+    // Eviction policy offer the pool to dispose of the entry.
+    // It could be that in the meantime the entry is not eligible for a disposal anymore.
+    private void evictionPolicyOfferDispose(Entry entry) {
         synchronized (entry) {
             // An entry may be disposed of only if it is not providing any shared objects. Since this method
             // is called without holding a lock on entry, it could be that in the meantime another thread acquired
@@ -243,7 +259,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
             }
 
             if (offerDisposeEntry) {
-                SynchronizedSharedObjectPool.this.offerDisposeEntry(this);
+                SynchronizedSharedObjectPool.this.entryOfferDispose(this);
             }
         }
 
@@ -273,10 +289,13 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
     public static class Builder<K, S extends SharedObject, P> {
 
         // Factory for creating new pooled objects.
-        protected PooledObjectFactory<K, P> pooledObjectFactory;
+        private PooledObjectFactory<K, P> pooledObjectFactory;
 
         // Factory for creating shared objects from pooled objects.
-        protected SharedObjectFactory<P, S> sharedObjectFactory;
+        private SharedObjectFactory<P, S> sharedObjectFactory;
+
+        // The policy for evicting non-used pooled objects.
+        private EvictionPolicy evictionPolicy;
 
 
         public Builder<K, S, P> setPooledObjectFactory(PooledObjectFactory<K, P> pooledObjectFactory) {
@@ -291,6 +310,12 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
         }
 
 
+        public Builder<K, S, P> setEvictionPolicy(EvictionPolicy evictionPolicy) {
+            this.evictionPolicy = evictionPolicy;
+            return this;
+        }
+
+
         public SynchronizedSharedObjectPool<K, S, P> build() {
             if (this.pooledObjectFactory == null) {
                 throw new IllegalStateException("pooledObjectFactory is required");
@@ -298,8 +323,12 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
             if (this.sharedObjectFactory == null) {
                 throw new IllegalStateException("sharedObjectFactory is required");
             }
+            if (this.evictionPolicy == null) {
+                throw new IllegalStateException("evictionPolicy is required");
+            }
 
-            return new SynchronizedSharedObjectPool<>(this.pooledObjectFactory, this.sharedObjectFactory);
+            return new SynchronizedSharedObjectPool<>(this.pooledObjectFactory, this.sharedObjectFactory,
+                    this.evictionPolicy);
         }
     }
 }

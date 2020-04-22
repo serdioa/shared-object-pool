@@ -11,10 +11,12 @@ public class LockingSharedObjectPoolTest extends AbstractSharedObjectPoolTest {
     protected LockingSharedObjectPool<String, SharedCounter, PooledCounter> buildPool() {
         PooledObjectFactory<String, PooledCounter> pof = new PooledCounterFactory();
         SharedObjectFactory<PooledCounter, SharedCounter> sof = LockingSharedObject.factory(SharedCounter.class);
+        EvictionPolicy evictionPolicy = new ImmediateEvictionPolicy();
 
         return new LockingSharedObjectPool.Builder<String, SharedCounter, PooledCounter>()
                 .setPooledObjectFactory(pof)
                 .setSharedObjectFactory(sof)
+                .setEvictionPolicy(evictionPolicy)
                 .build();
     }
 }

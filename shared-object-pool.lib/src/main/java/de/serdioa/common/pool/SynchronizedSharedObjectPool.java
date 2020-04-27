@@ -3,6 +3,12 @@ package de.serdioa.common.pool;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,9 +19,26 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
 
     private static final Logger logger = LoggerFactory.getLogger(SynchronizedSharedObjectPool.class);
 
+    // A static counter used to create unique names for object pools.
+    private static final AtomicInteger NAME_COUNTER = new AtomicInteger();
+
+    // Name of this object pool used for logging and naming threads.
+    private final String name;
+
     // Pooled entries.
     // @GuardedBy(lock)
     private final Map<K, Entry> entries = new HashMap<>();
+
+    // Duration in milliseconds to keep idle pooled objects before disposing of them. Non-positive number means
+    // disposing of idle pooled objects immediately.
+    // If initializing a pooled object is an expensive operation, for example if it requires loading large amount
+    // of data from a remote source, and the number of pooled objects is not too high, it could make sense to keep
+    // idle pooled objects for some time, to prevent an expensive initialization of a pooled object will become required
+    // shortly afterwards.
+    private final long idleDisposeTimeMillis;
+
+    // The executor service for running disposals.
+    private final ScheduledExecutorService disposeExecutor;
 
     // Synchronization monitor.
     private final Object lock = new Object();
@@ -23,8 +46,47 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
 
     private SynchronizedSharedObjectPool(PooledObjectFactory<K, P> pooledObjectFactory,
             SharedObjectFactory<P, S> sharedObjectFactory,
-            EvictionPolicy evictionPolicy) {
+            String name,
+            EvictionPolicy evictionPolicy,
+            long idleDisposeTimeMillis,
+            int disposeThreads) {
         super(pooledObjectFactory, sharedObjectFactory, evictionPolicy);
+
+        if (name != null) {
+            this.name = name;
+        } else {
+            this.name = this.getClass().getSimpleName() + '-' + NAME_COUNTER.getAndIncrement();
+        }
+        this.idleDisposeTimeMillis = idleDisposeTimeMillis;
+
+        // Create an executor for disposals only if asynchronous disposal is configured.
+        if (this.idleDisposeTimeMillis > 0) {
+            ThreadFactory disposerThreadFactory = new ThreadFactory() {
+                private final AtomicInteger counter = new AtomicInteger();
+
+
+                @Override
+                public Thread newThread(Runnable r) {
+                    return new Thread(r, SynchronizedSharedObjectPool.this.name + "-" + counter.getAndDecrement());
+                }
+            };
+            this.disposeExecutor = Executors.newScheduledThreadPool(disposeThreads, disposerThreadFactory);
+        } else {
+            // Synchronous disposal is configured, no executor is required.
+            this.disposeExecutor = null;
+        }
+    }
+
+
+    @Override
+    public void dispose() {
+        super.dispose();
+
+        // If a disposal executor exist (that is, if an asynchronous disposal was configured), stop the executor
+        // without waiting for disposal tasks.
+        if (this.disposeExecutor != null) {
+            this.disposeExecutor.shutdownNow();
+        }
     }
 
 
@@ -111,22 +173,16 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
     }
 
 
-    // Entry offer the pool to dispose of itself.
-    // It is up to the eviction policy to decide if the offer to be accepted immediately, or to dispose of the entry
-    // later.
-    // If the eviction policy decides to postpone, it may happens that in the meantime the entry will be re-used
-    // and not anymore eligible to disposal when the eviction policy decided to do so.
-    private void entryOfferDispose(Entry entry) {
-        Cancellable evictionCancellable = this.evictionPolicy.evict(() -> this.evictionPolicyOfferDispose(entry));
+    // Try to dispose of the specified entry. We may dispose the entry synchronously, or schedule a later attempt
+    // dependend on the configuration of this shared object pool.
+    // It could be that in the meantime the entry is not eligible for a disposal anymore, in such case no disposal
+    // takes place.
+    private void offerDispose(Entry entry) {
+        logger.trace("!!! Offered to dispose of entry {}", entry.getKey());
 
-        // TODO: store evictionCancellable in Entry, and make sure Entry cancels it if it is not immediately
-        // disposed of, and in the meantime becomes non-eligible for a disposal.
-    }
+        // Should we remove entry from the cache after the synchronized block?
+        boolean removeEntryFromCache;
 
-
-    // Eviction policy offer the pool to dispose of the entry.
-    // It could be that in the meantime the entry is not eligible for a disposal anymore.
-    private void evictionPolicyOfferDispose(Entry entry) {
         synchronized (entry) {
             // An entry may be disposed of only if it is not providing any shared objects. Since this method
             // is called without holding a lock on entry, it could be that in the meantime another thread acquired
@@ -134,6 +190,8 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
             int entrySharedCount = entry.getSharedCount();
             if (entrySharedCount > 0) {
                 // The entry is providing some shared objects, so it can't be disposed of.
+                logger
+                        .trace("!!! The entry {} provides {} shared objects, skipping disposal", entry.getKey(), entrySharedCount);
                 return;
             } else if (entrySharedCount == Entry.DISPOSED) {
                 // Another thread had already disposed of the entry. This could happens in the following scenario:
@@ -144,24 +202,101 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
                 // the entry for disposal.
                 // * Another thread (B) obtain the synchronization lock and disposes of the entry.
                 // * This thread (A) obtains the synchronization lock, but the entry is already disposed of.
+                logger.trace("!!! The entry {} is already disposed of, skipping disposal", entry.getKey());
                 return;
             } else if (entrySharedCount == Entry.NEW) {
                 throw new IllegalStateException("Entry offered for disposal, but the status is new: " + entry.getKey());
             }
 
+            // The entry is eligible for disposal. Shall we dispose of the entry immediately, or shall we schedule it
+            // to be disposed later?
+            boolean disposeEntryImmediately;
+            if (this.idleDisposeTimeMillis > 0) {
+                long lastReturnTime = entry.getLastReturnTime();
+                long disposeAt = lastReturnTime + this.idleDisposeTimeMillis;
+                long now = System.currentTimeMillis();
+                long delayBeforeDispose = disposeAt - now;
+
+                logger.trace("!!! Entry {}: lastReturnTime={}, disposeAt={}, now={}, delayBeforeDispose={}",
+                        entry.getKey(), lastReturnTime, disposeAt, now, delayBeforeDispose);
+
+                if (delayBeforeDispose > 0) {
+                    // Instead of disposing of the entry immediately, schedule to try again later.
+                    ScheduledFuture<?> disposeTask = this.disposeExecutor.schedule(() -> this.offerDispose(entry),
+                            delayBeforeDispose, TimeUnit.MILLISECONDS);
+                    entry.setDisposeTask(disposeTask);
+
+                    logger.trace("!!! Entry {}: scheduled disposal after {} ms", entry.getKey(), delayBeforeDispose);
+
+                    // We have scheduled a later attempt.
+                    disposeEntryImmediately = false;
+                } else {
+                    // Generally asynchronous disposal of entries is configured, but for this entry the idle time
+                    // already expired and we shall dispose of it immediately.
+                    logger.trace("!!! Entry {}: delayBeforeDispose <= 0, disposing immediately", entry.getKey());
+                    disposeEntryImmediately = true;
+                }
+            } else {
+                // A synchronous disposal of entries is configured, we never wait.
+                logger.trace("!!! Entry {}: synchronous disposal configured, diposing immediately", entry.getKey());
+                disposeEntryImmediately = true;
+            }
+
             // Dispose of the entry. Note that the entry still remains in the cache.
-            try {
-                entry.dispose();
-            } catch (Exception ex) {
-                logger.error("Exception when disposing of entry {}", entry.getKey(), ex);
+            if (disposeEntryImmediately) {
+                logger.trace("!!! Entry {}: disposing", entry.getKey());
+
+                try {
+                    entry.dispose();
+                } catch (Exception ex) {
+                    logger.error("Exception when disposing of entry {}", entry.getKey(), ex);
+                }
+
+                logger.trace("!!! Entry {}: disposed", entry.getKey());
+
+                // We have disposed of the entry, so we shall remove it from cache after the synchronized block.
+                removeEntryFromCache = true;
+            } else {
+                // We have not disposed of the entry: either it is not eligible for the disposal at all (for example,
+                // because it provides shared objects), or we have scheduled the entry for a later disposal.
+                // Either way, the entry shall remain in the cache.
+                removeEntryFromCache = false;
             }
         }
 
-        // Remove the entry from the cache. When removing, make sure that we are removing the right
-        // entry to prevent case when another thread had already removed the "bad" entry and inserted
-        // into the cache another, "good" one.
-        synchronized (this) {
-            this.entries.remove(entry.getKey(), entry);
+        // Remove the entry from the cache, if it has been disposed of. When removing, make sure that we are removing
+        // the right entry to prevent case when another thread had already removed the "bad" entry and inserted into
+        // the cache another, "good" one.
+        if (removeEntryFromCache) {
+            logger.trace("!!! Entry {}: removing from cache", entry.getKey());
+
+            synchronized (this.lock) {
+                this.entries.remove(entry.getKey(), entry);
+            }
+
+            logger.trace("!!! Entry {}: removed from cache", entry.getKey());
+        }
+    }
+
+
+    public int getPooledObjectsCount() {
+        synchronized (this.lock) {
+            return this.entries.size();
+        }
+    }
+
+
+    public int getSharedObjectsCount(K key) {
+        synchronized (this.lock) {
+            Entry entry = this.entries.get(key);
+            return (entry == null ? 0 : entry.getSharedCount());
+        }
+    }
+
+
+    public boolean containsPooledObject(K key) {
+        synchronized (this.lock) {
+            return this.entries.containsKey(key);
         }
     }
 
@@ -182,6 +317,20 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
         // @GuardedBy(this)
         private int sharedCount = NEW;
 
+        // Last time the last shared object from this entry was returned. The time makes sense only if this entry
+        // currently does not provide any shared objects, that is if sharedCount == 0, because the time is NOT reset
+        // when new shared objects are created.
+        // @GuardedBy(this)
+        private long lastReturnTime = 0;
+
+        // The ScheduledFuture for asynchronously disposing of this entry, if any.
+        // A ScheduledFuture is set when this entry is scheduled for an asynchronous disposal.
+        // If this entry provides a new shared object before being disposed, it may cancel the ScheduledFuture.
+        // Even if the ScheduledFuture is not cancellled, it will not dispose of this entry when executed, if the
+        // entry provides a shared object.
+        // @GuardedBy(this)
+        private ScheduledFuture<?> disposeTask;
+
 
         Entry(K key, P pooledObject) {
             this.key = Objects.requireNonNull(key);
@@ -200,6 +349,8 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
 
 
         synchronized void initialize() throws InitializationException {
+            logger.trace("!!! Inside entry {}: initializing", this.key);
+
             ensureNew();
 
             try {
@@ -210,14 +361,20 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
                 this.sharedCount = DISPOSED;
                 throw InitializationException.wrap(this.key, ex);
             }
+
+            logger.trace("!!! Inside entry {}: initialized", this.key);
         }
 
 
         synchronized void dispose() {
+            logger.trace("!!! Inside entry {}: disposing", this.key);
+
             ensureActive();
 
             SynchronizedSharedObjectPool.this.disposePooledObject(this.pooledObject);
             this.sharedCount = DISPOSED;
+
+            logger.trace("!!! Inside entry {}: disposed", this.key);
         }
 
 
@@ -226,17 +383,44 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
         }
 
 
+        synchronized long getLastReturnTime() {
+            return this.lastReturnTime;
+        }
+
+
+        synchronized void setDisposeTask(ScheduledFuture<?> disposeTask) {
+            this.disposeTask = disposeTask;
+        }
+
+
         synchronized S createSharedObject() {
+            logger.trace("!!! Inside entry {}: creating shared object", this.key);
+
             ensureActive();
+
             S sharedObject = SynchronizedSharedObjectPool.this
                     .createSharedObject(this.pooledObject, this::disposeSharedObject);
-
             this.sharedCount++;
+
+            logger.trace("!!! Inside entry {}: created shared object, sharedCount={}", this.key, this.sharedCount);
+
+            // If this entry was scheduled for disposal, attempt to cancel the dispose task.
+            // This entry will not be disposed of even if the task can not be cancelled (the task will not dispose
+            // of this entry if it provides any shared objects), but canelling the task reduces unnecessary load
+            // on the disposal executor.
+            if (this.disposeTask != null) {
+                this.disposeTask.cancel(true);
+                this.disposeTask = null;
+                logger.trace("!!! Inside entry {}: cancelled dispose task", this.key);
+            }
+
             return sharedObject;
         }
 
 
         private void disposeSharedObject() {
+            logger.trace("!!! Inside entry {}: disposing of shared object", this.key);
+
             // Should we offer the pool to dispose of this entry after the synchronized block?
             boolean offerDisposeEntry = false;
 
@@ -249,17 +433,26 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
                     this.sharedCount--;
                 }
 
+                logger
+                        .trace("!!! Inside entry {}: disposed of shared object, sharedCount={}", this.key, this.sharedCount);
+
                 if (this.sharedCount == 0) {
                     // This entry is not providing any shared objects anymore, and may be disposed of.
                     // It is up to the pool to deside if the entry should actually be disposed of.
                     // A pool implementation may decide to dispose of the entry immediately, or it may decide to keep
                     // an entry active for a time, so that it is immediately available if required.
                     offerDisposeEntry = true;
+
+                    // Set the time when the last shared object was returned.
+                    this.lastReturnTime = System.currentTimeMillis();
+
+                    logger.trace("!!! Inside entry {}: disposed of last shared object, will offer dispose", this.key);
                 }
             }
 
             if (offerDisposeEntry) {
-                SynchronizedSharedObjectPool.this.entryOfferDispose(this);
+                logger.trace("!!! Inside entry {}: offer dispose", this.key);
+                SynchronizedSharedObjectPool.this.offerDispose(this);
             }
         }
 
@@ -294,8 +487,21 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
         // Factory for creating shared objects from pooled objects.
         private SharedObjectFactory<P, S> sharedObjectFactory;
 
+        // An optional name of the pool. The name is used for log messages and in names of background threads.
+        private String name;
+
         // The policy for evicting non-used pooled objects.
         private EvictionPolicy evictionPolicy;
+
+        // Duration in milliseconds to keep idle pooled objects before disposing of them. Non-positive number means
+        // disposing of idle pooled objects immediately.
+        // By default idle pooled objects are disposed of immediately.
+        private long idleDisposeTimeMillis;
+
+        // The number of threads asynchronously disposing of idle objects.
+        // By default idle pooled objects are disposed of immediately, so no threads for asynchronous disposal
+        // are configured.
+        int disposeThreads;
 
 
         public Builder<K, S, P> setPooledObjectFactory(PooledObjectFactory<K, P> pooledObjectFactory) {
@@ -310,8 +516,26 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
         }
 
 
+        public Builder<K, S, P> setName(String name) {
+            this.name = name;
+            return this;
+        }
+
+
         public Builder<K, S, P> setEvictionPolicy(EvictionPolicy evictionPolicy) {
             this.evictionPolicy = evictionPolicy;
+            return this;
+        }
+
+
+        public Builder<K, S, P> setIdleDisposeTimeMillis(long idleDisposeTimeMillis) {
+            this.idleDisposeTimeMillis = idleDisposeTimeMillis;
+            return this;
+        }
+
+
+        public Builder<K, S, P> setDisposeThreads(int disposeThreads) {
+            this.disposeThreads = disposeThreads;
             return this;
         }
 
@@ -323,12 +547,22 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
             if (this.sharedObjectFactory == null) {
                 throw new IllegalStateException("sharedObjectFactory is required");
             }
+            // The name is optional.
             if (this.evictionPolicy == null) {
                 throw new IllegalStateException("evictionPolicy is required");
             }
+            // A non-positive idleDisposeTimeMillis is valid, it indicates that idle objects shall be disposed of
+            // immediately.
 
-            return new SynchronizedSharedObjectPool<>(this.pooledObjectFactory, this.sharedObjectFactory,
-                    this.evictionPolicy);
+            // If idleDisposeTimeMillis > 0, that is a postponed disposal is requested, the number of dispose threads
+            // must be > 0.
+            if (this.idleDisposeTimeMillis > 0 && this.disposeThreads <= 0) {
+                throw new IllegalStateException("idleDisposeTimeMillis (" + this.idleDisposeTimeMillis + ") > 0, "
+                        + "but disposeThreads (" + this.disposeThreads + ") <= 0");
+            }
+
+            return new SynchronizedSharedObjectPool<>(this.pooledObjectFactory, this.sharedObjectFactory, this.name,
+                    this.evictionPolicy, this.idleDisposeTimeMillis, this.disposeThreads);
         }
     }
 }

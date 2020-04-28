@@ -18,19 +18,14 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P> imp
     // Factory for creating shared objects from pooled objects.
     private final SharedObjectFactory<P, S> sharedObjectFactory;
 
-    // The policy for evicting non-used pooled objects.
-    protected final EvictionPolicy evictionPolicy;
-
 
     protected AbstractSharedObjectPool(final String name,
             PooledObjectFactory<K, P> pooledObjectFactory,
-            SharedObjectFactory<P, S> sharedObjectFactory,
-            EvictionPolicy evictionPolicy) {
+            SharedObjectFactory<P, S> sharedObjectFactory) {
 
         this.name = (name != null ? null : this.getClass().getSimpleName() + '-' + NAME_COUNTER.getAndIncrement());
         this.pooledObjectFactory = Objects.requireNonNull(pooledObjectFactory);
         this.sharedObjectFactory = Objects.requireNonNull(sharedObjectFactory);
-        this.evictionPolicy = Objects.requireNonNull(evictionPolicy);
     }
 
 
@@ -40,7 +35,7 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P> imp
 
 
     public void dispose() {
-        this.evictionPolicy.dispose();
+        // May be implemented in a derived class.
     }
 
 

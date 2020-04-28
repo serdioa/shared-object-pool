@@ -27,9 +27,8 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
 
     private LockingSharedObjectPool(String name,
             PooledObjectFactory<K, P> pooledObjectFactory,
-            SharedObjectFactory<P, S> sharedObjectFactory,
-            EvictionPolicy evictionPolicy) {
-        super(name, pooledObjectFactory, sharedObjectFactory, evictionPolicy);
+            SharedObjectFactory<P, S> sharedObjectFactory) {
+        super(name, pooledObjectFactory, sharedObjectFactory);
     }
 
 
@@ -139,22 +138,11 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
     }
 
 
-    // Entry offer the pool to dispose of itself.
-    // It is up to the eviction policy to decide if the offer to be accepted immediately, or to dispose of the entry
-    // later.
-    // If the eviction policy decides to postpone, it may happens that in the meantime the entry will be re-used
-    // and not anymore eligible to disposal when the eviction policy decided to do so.
-    private void entryOfferDispose(Entry entry) {
-        Cancellable evictionCancellable = this.evictionPolicy.evict(() -> this.evictionPolicyOfferDispose(entry));
-
-        // TODO: store evictionCancellable in Entry, and make sure Entry cancels it if it is not immediately
-        // disposed of, and in the meantime becomes non-eligible for a disposal.
-    }
-
-
-    // Eviction policy offer the pool to dispose of the entry.
-    // It could be that in the meantime the entry is not eligible for a disposal anymore.
-    private void evictionPolicyOfferDispose(Entry entry) {
+    // Try to dispose of the specified entry. We may dispose the entry synchronously, or schedule a later attempt
+    // dependend on the configuration of this shared object pool.
+    // It could be that in the meantime the entry is not eligible for a disposal anymore, in such case no disposal
+    // takes place.
+    private void offerDispose(Entry entry) {
         Lock entryWriteLock = entry.writeLock();
         entryWriteLock.lock();
         try {
@@ -337,7 +325,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
             }
 
             if (offerDisposeEntry) {
-                LockingSharedObjectPool.this.entryOfferDispose(this);
+                LockingSharedObjectPool.this.offerDispose(this);
             }
         }
 
@@ -375,9 +363,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
         // Factory for creating shared objects from pooled objects.
         protected SharedObjectFactory<P, S> sharedObjectFactory;
 
-        // The policy for evicting non-used pooled objects.
-        private EvictionPolicy evictionPolicy;
-
 
         public Builder<K, S, P> setName(String name) {
             this.name = name;
@@ -397,12 +382,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
         }
 
 
-        public Builder<K, S, P> setEvictionPolicy(EvictionPolicy evictionPolicy) {
-            this.evictionPolicy = evictionPolicy;
-            return this;
-        }
-
-
         public LockingSharedObjectPool<K, S, P> build() {
             // The name is optional.
             if (this.pooledObjectFactory == null) {
@@ -411,12 +390,8 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
             if (this.sharedObjectFactory == null) {
                 throw new IllegalStateException("sharedObjectFactory is required");
             }
-            if (this.evictionPolicy == null) {
-                throw new IllegalStateException("evictionPolicy is required");
-            }
 
-            return new LockingSharedObjectPool<>(this.name, this.pooledObjectFactory, this.sharedObjectFactory,
-                    this.evictionPolicy);
+            return new LockingSharedObjectPool<>(this.name, this.pooledObjectFactory, this.sharedObjectFactory);
         }
     }
 }

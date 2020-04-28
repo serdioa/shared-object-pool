@@ -31,12 +31,10 @@ public class SynchronizedSharedObjectPoolDisposeTest {
     private SynchronizedSharedObjectPool<String, SharedCounter, PooledCounter> buildPool() {
         PooledObjectFactory<String, PooledCounter> pof = new PooledCounterFactory();
         SharedObjectFactory<PooledCounter, SharedCounter> sof = SynchronizedSharedObject.factory(SharedCounter.class);
-        EvictionPolicy evictionPolicy = new ImmediateEvictionPolicy();
 
         return new SynchronizedSharedObjectPool.Builder<String, SharedCounter, PooledCounter>()
                 .setPooledObjectFactory(pof)
                 .setSharedObjectFactory(sof)
-                .setEvictionPolicy(evictionPolicy)
                 .build();
     }
 

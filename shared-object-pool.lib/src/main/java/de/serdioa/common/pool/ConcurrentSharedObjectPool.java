@@ -40,9 +40,8 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
 
     private ConcurrentSharedObjectPool(String name,
             PooledObjectFactory<K, P> pooledObjectFactory,
-            SharedObjectFactory<P, S> sharedObjectFactory,
-            EvictionPolicy evictionPolicy) {
-        super(name, pooledObjectFactory, sharedObjectFactory, evictionPolicy);
+            SharedObjectFactory<P, S> sharedObjectFactory) {
+        super(name, pooledObjectFactory, sharedObjectFactory);
         synchronized (this.lifecycleMonitor) {
             this.sharedObjectsRipper = new Thread(this::reapSharedObjects, this.getClass().getName() + "-ripper");
             this.sharedObjectsRipper.setDaemon(true);
@@ -191,22 +190,11 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     }
 
 
-    // Entry offer the pool to dispose of itself.
-    // It is up to the eviction policy to decide if the offer to be accepted immediately, or to dispose of the entry
-    // later.
-    // If the eviction policy decides to postpone, it may happens that in the meantime the entry will be re-used
-    // and not anymore eligible to disposal when the eviction policy decided to do so.
-    private void entryOfferDispose(Entry entry) {
-        Cancellable evictionCancellable = this.evictionPolicy.evict(() -> this.evictionPolicyOfferDispose(entry));
-
-        // TODO: store evictionCancellable in Entry, and make sure Entry cancels it if it is not immediately
-        // disposed of, and in the meantime becomes non-eligible for a disposal.
-    }
-
-
-    // Eviction policy offer the pool to dispose of the entry.
-    // It could be that in the meantime the entry is not eligible for a disposal anymore.
-    private void evictionPolicyOfferDispose(Entry entry) {
+    // Try to dispose of the specified entry. We may dispose the entry synchronously, or schedule a later attempt
+    // dependend on the configuration of this shared object pool.
+    // It could be that in the meantime the entry is not eligible for a disposal anymore, in such case no disposal
+    // takes place.
+    private void offerDispose(Entry entry) {
         if (!this.disposeUnusedEntries) {
             // Fast track if disposing of unused entries is disabled.
             return;
@@ -553,7 +541,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             // If this entry is not providing any shared objects, offer to the pool to dispose of this entry.
             // It is up to the pool to decide if and when this entry should be disposed of.
             if (offerDisposeEntry) {
-                ConcurrentSharedObjectPool.this.evictionPolicyOfferDispose(this);
+                ConcurrentSharedObjectPool.this.offerDispose(this);
             }
         }
 
@@ -702,9 +690,6 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         // Factory for creating shared objects from pooled objects.
         protected SharedObjectFactory<P, S> sharedObjectFactory;
 
-        // The policy for evicting non-used pooled objects.
-        private EvictionPolicy evictionPolicy;
-
 
         public Builder<K, S, P> setName(String name) {
             this.name = name;
@@ -724,12 +709,6 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         }
 
 
-        public Builder<K, S, P> setEvictionPolicy(EvictionPolicy evictionPolicy) {
-            this.evictionPolicy = evictionPolicy;
-            return this;
-        }
-
-
         public ConcurrentSharedObjectPool<K, S, P> build() {
             // The name is optional.
             if (this.pooledObjectFactory == null) {
@@ -738,12 +717,8 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             if (this.sharedObjectFactory == null) {
                 throw new IllegalStateException("sharedObjectFactory is required");
             }
-            if (this.evictionPolicy == null) {
-                throw new IllegalStateException("evictionPolicy is required");
-            }
 
-            return new ConcurrentSharedObjectPool<>(this.name, this.pooledObjectFactory, this.sharedObjectFactory,
-                    this.evictionPolicy);
+            return new ConcurrentSharedObjectPool<>(this.name, this.pooledObjectFactory, this.sharedObjectFactory);
         }
     }
 }

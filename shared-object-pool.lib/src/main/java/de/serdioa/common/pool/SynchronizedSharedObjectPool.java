@@ -41,10 +41,9 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
     private SynchronizedSharedObjectPool(String name,
             PooledObjectFactory<K, P> pooledObjectFactory,
             SharedObjectFactory<P, S> sharedObjectFactory,
-            EvictionPolicy evictionPolicy,
             long idleDisposeTimeMillis,
             int disposeThreads) {
-        super(name, pooledObjectFactory, sharedObjectFactory, evictionPolicy);
+        super(name, pooledObjectFactory, sharedObjectFactory);
 
         this.idleDisposeTimeMillis = idleDisposeTimeMillis;
 
@@ -479,9 +478,6 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
         // Factory for creating shared objects from pooled objects.
         private SharedObjectFactory<P, S> sharedObjectFactory;
 
-        // The policy for evicting non-used pooled objects.
-        private EvictionPolicy evictionPolicy;
-
         // Duration in milliseconds to keep idle pooled objects before disposing of them. Non-positive number means
         // disposing of idle pooled objects immediately.
         // By default idle pooled objects are disposed of immediately.
@@ -511,12 +507,6 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
         }
 
 
-        public Builder<K, S, P> setEvictionPolicy(EvictionPolicy evictionPolicy) {
-            this.evictionPolicy = evictionPolicy;
-            return this;
-        }
-
-
         public Builder<K, S, P> setIdleDisposeTimeMillis(long idleDisposeTimeMillis) {
             this.idleDisposeTimeMillis = idleDisposeTimeMillis;
             return this;
@@ -537,9 +527,6 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
             if (this.sharedObjectFactory == null) {
                 throw new IllegalStateException("sharedObjectFactory is required");
             }
-            if (this.evictionPolicy == null) {
-                throw new IllegalStateException("evictionPolicy is required");
-            }
             // A non-positive idleDisposeTimeMillis is valid, it indicates that idle objects shall be disposed of
             // immediately.
 
@@ -551,7 +538,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
             }
 
             return new SynchronizedSharedObjectPool<>(this.name, this.pooledObjectFactory, this.sharedObjectFactory,
-                    this.evictionPolicy, this.idleDisposeTimeMillis, this.disposeThreads);
+                    this.idleDisposeTimeMillis, this.disposeThreads);
         }
     }
 }

@@ -20,12 +20,10 @@ public class SynchronizedSharedObjectPoolValidateTest {
     private SynchronizedSharedObjectPool<String, SharedCounter, PooledCounter> buildImmediatePool() {
         PooledObjectFactory<String, PooledCounter> pof = new PooledCounterFactory();
         SharedObjectFactory<PooledCounter, SharedCounter> sof = SynchronizedSharedObject.factory(SharedCounter.class);
-        EvictionPolicy evictionPolicy = new ImmediateEvictionPolicy();
 
         return new SynchronizedSharedObjectPool.Builder<String, SharedCounter, PooledCounter>()
                 .setPooledObjectFactory(pof)
                 .setSharedObjectFactory(sof)
-                .setEvictionPolicy(evictionPolicy)
                 .build();
     }
 
@@ -33,14 +31,12 @@ public class SynchronizedSharedObjectPoolValidateTest {
     private SynchronizedSharedObjectPool<String, SharedCounter, PooledCounter> buildDelayedPool(long disposeDelayMillis) {
         PooledObjectFactory<String, PooledCounter> pof = new PooledCounterFactory();
         SharedObjectFactory<PooledCounter, SharedCounter> sof = SynchronizedSharedObject.factory(SharedCounter.class);
-        EvictionPolicy evictionPolicy = new ImmediateEvictionPolicy();
 
         return new SynchronizedSharedObjectPool.Builder<String, SharedCounter, PooledCounter>()
                 .setPooledObjectFactory(pof)
                 .setSharedObjectFactory(sof)
                 .setDisposeThreads(1)
                 .setIdleDisposeTimeMillis(disposeDelayMillis)
-                .setEvictionPolicy(evictionPolicy)
                 .build();
     }
 

@@ -19,12 +19,6 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
 
     private static final Logger logger = LoggerFactory.getLogger(SynchronizedSharedObjectPool.class);
 
-    // A static counter used to create unique names for object pools.
-    private static final AtomicInteger NAME_COUNTER = new AtomicInteger();
-
-    // Name of this object pool used for logging and naming threads.
-    private final String name;
-
     // Pooled entries.
     // @GuardedBy(lock)
     private final Map<K, Entry> entries = new HashMap<>();
@@ -44,19 +38,14 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
     private final Object lock = new Object();
 
 
-    private SynchronizedSharedObjectPool(PooledObjectFactory<K, P> pooledObjectFactory,
+    private SynchronizedSharedObjectPool(String name,
+            PooledObjectFactory<K, P> pooledObjectFactory,
             SharedObjectFactory<P, S> sharedObjectFactory,
-            String name,
             EvictionPolicy evictionPolicy,
             long idleDisposeTimeMillis,
             int disposeThreads) {
-        super(pooledObjectFactory, sharedObjectFactory, evictionPolicy);
+        super(name, pooledObjectFactory, sharedObjectFactory, evictionPolicy);
 
-        if (name != null) {
-            this.name = name;
-        } else {
-            this.name = this.getClass().getSimpleName() + '-' + NAME_COUNTER.getAndIncrement();
-        }
         this.idleDisposeTimeMillis = idleDisposeTimeMillis;
 
         // Create an executor for disposals only if asynchronous disposal is configured.
@@ -481,14 +470,14 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
 
     public static class Builder<K, S extends SharedObject, P> {
 
+        // An optional name of the pool. The name is used for log messages and in names of background threads.
+        private String name;
+
         // Factory for creating new pooled objects.
         private PooledObjectFactory<K, P> pooledObjectFactory;
 
         // Factory for creating shared objects from pooled objects.
         private SharedObjectFactory<P, S> sharedObjectFactory;
-
-        // An optional name of the pool. The name is used for log messages and in names of background threads.
-        private String name;
 
         // The policy for evicting non-used pooled objects.
         private EvictionPolicy evictionPolicy;
@@ -504,6 +493,12 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
         int disposeThreads;
 
 
+        public Builder<K, S, P> setName(String name) {
+            this.name = name;
+            return this;
+        }
+
+
         public Builder<K, S, P> setPooledObjectFactory(PooledObjectFactory<K, P> pooledObjectFactory) {
             this.pooledObjectFactory = pooledObjectFactory;
             return this;
@@ -512,12 +507,6 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
 
         public Builder<K, S, P> setSharedObjectFactory(SharedObjectFactory<P, S> sharedObjectFactory) {
             this.sharedObjectFactory = sharedObjectFactory;
-            return this;
-        }
-
-
-        public Builder<K, S, P> setName(String name) {
-            this.name = name;
             return this;
         }
 
@@ -541,13 +530,13 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
 
 
         public SynchronizedSharedObjectPool<K, S, P> build() {
+            // The name is optional.
             if (this.pooledObjectFactory == null) {
                 throw new IllegalStateException("pooledObjectFactory is required");
             }
             if (this.sharedObjectFactory == null) {
                 throw new IllegalStateException("sharedObjectFactory is required");
             }
-            // The name is optional.
             if (this.evictionPolicy == null) {
                 throw new IllegalStateException("evictionPolicy is required");
             }
@@ -561,7 +550,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
                         + "but disposeThreads (" + this.disposeThreads + ") <= 0");
             }
 
-            return new SynchronizedSharedObjectPool<>(this.pooledObjectFactory, this.sharedObjectFactory, this.name,
+            return new SynchronizedSharedObjectPool<>(this.name, this.pooledObjectFactory, this.sharedObjectFactory,
                     this.evictionPolicy, this.idleDisposeTimeMillis, this.disposeThreads);
         }
     }

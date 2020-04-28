@@ -38,10 +38,11 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     private final Object lifecycleMonitor = new Object();
 
 
-    private ConcurrentSharedObjectPool(PooledObjectFactory<K, P> pooledObjectFactory,
+    private ConcurrentSharedObjectPool(String name,
+            PooledObjectFactory<K, P> pooledObjectFactory,
             SharedObjectFactory<P, S> sharedObjectFactory,
             EvictionPolicy evictionPolicy) {
-        super(pooledObjectFactory, sharedObjectFactory, evictionPolicy);
+        super(name, pooledObjectFactory, sharedObjectFactory, evictionPolicy);
         synchronized (this.lifecycleMonitor) {
             this.sharedObjectsRipper = new Thread(this::reapSharedObjects, this.getClass().getName() + "-ripper");
             this.sharedObjectsRipper.setDaemon(true);
@@ -692,6 +693,9 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
 
     public static class Builder<K, S extends SharedObject, P> {
 
+        // An optional name of the pool. The name is used for log messages and in names of background threads.
+        private String name;
+
         // Factory for creating new pooled objects.
         protected PooledObjectFactory<K, P> pooledObjectFactory;
 
@@ -700,6 +704,12 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
 
         // The policy for evicting non-used pooled objects.
         private EvictionPolicy evictionPolicy;
+
+
+        public Builder<K, S, P> setName(String name) {
+            this.name = name;
+            return this;
+        }
 
 
         public Builder<K, S, P> setPooledObjectFactory(PooledObjectFactory<K, P> pooledObjectFactory) {
@@ -721,6 +731,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
 
 
         public ConcurrentSharedObjectPool<K, S, P> build() {
+            // The name is optional.
             if (this.pooledObjectFactory == null) {
                 throw new IllegalStateException("pooledObjectFactory is required");
             }
@@ -731,7 +742,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
                 throw new IllegalStateException("evictionPolicy is required");
             }
 
-            return new ConcurrentSharedObjectPool<>(this.pooledObjectFactory, this.sharedObjectFactory,
+            return new ConcurrentSharedObjectPool<>(this.name, this.pooledObjectFactory, this.sharedObjectFactory,
                     this.evictionPolicy);
         }
     }

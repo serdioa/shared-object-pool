@@ -3,6 +3,7 @@ package de.serdioa.common.pool;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -24,10 +25,11 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
 
-    private LockingSharedObjectPool(PooledObjectFactory<K, P> pooledObjectFactory,
+    private LockingSharedObjectPool(String name,
+            PooledObjectFactory<K, P> pooledObjectFactory,
             SharedObjectFactory<P, S> sharedObjectFactory,
             EvictionPolicy evictionPolicy) {
-        super(pooledObjectFactory, sharedObjectFactory, evictionPolicy);
+        super(name, pooledObjectFactory, sharedObjectFactory, evictionPolicy);
     }
 
 
@@ -364,6 +366,9 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
 
     public static class Builder<K, S extends SharedObject, P> {
 
+        // An optional name of the pool. The name is used for log messages and in names of background threads.
+        private String name;
+
         // Factory for creating new pooled objects.
         protected PooledObjectFactory<K, P> pooledObjectFactory;
 
@@ -372,6 +377,12 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
 
         // The policy for evicting non-used pooled objects.
         private EvictionPolicy evictionPolicy;
+
+
+        public Builder<K, S, P> setName(String name) {
+            this.name = name;
+            return this;
+        }
 
 
         public Builder<K, S, P> setPooledObjectFactory(PooledObjectFactory<K, P> pooledObjectFactory) {
@@ -393,6 +404,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
 
 
         public LockingSharedObjectPool<K, S, P> build() {
+            // The name is optional.
             if (this.pooledObjectFactory == null) {
                 throw new IllegalStateException("pooledObjectFactory is required");
             }
@@ -403,7 +415,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
                 throw new IllegalStateException("evictionPolicy is required");
             }
 
-            return new LockingSharedObjectPool<>(this.pooledObjectFactory, this.sharedObjectFactory,
+            return new LockingSharedObjectPool<>(this.name, this.pooledObjectFactory, this.sharedObjectFactory,
                     this.evictionPolicy);
         }
     }

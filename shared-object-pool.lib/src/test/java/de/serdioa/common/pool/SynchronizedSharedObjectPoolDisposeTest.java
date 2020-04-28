@@ -7,11 +7,10 @@ import de.serdioa.common.pool.sample.PooledCounterFactory;
 import de.serdioa.common.pool.sample.SharedCounter;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 
-public class SynchronizedSharedObjectPoolImmediateTimingTest {
+public class SynchronizedSharedObjectPoolDisposeTest {
 
     private SynchronizedSharedObjectPool<String, SharedCounter, PooledCounter> pool;
 

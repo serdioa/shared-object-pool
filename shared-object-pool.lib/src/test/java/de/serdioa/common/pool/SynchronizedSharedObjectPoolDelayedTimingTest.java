@@ -9,7 +9,6 @@ import de.serdioa.common.pool.sample.PooledCounterFactory;
 import de.serdioa.common.pool.sample.SharedCounter;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 
@@ -17,8 +16,6 @@ public class SynchronizedSharedObjectPoolDelayedTimingTest {
 
     private static final long TICK = 100;
     private static final long TICK_OVER_2 = 50;
-    private static final long TICK_OVER_3 = 34;
-    private static final long TICK_OVER_4 = 25;
     private static final long TICK_2_OVER_3 = 66;
 
     private static final long TOCK = 125;

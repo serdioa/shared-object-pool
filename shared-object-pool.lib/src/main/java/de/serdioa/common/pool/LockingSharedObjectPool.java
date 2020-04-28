@@ -3,7 +3,6 @@ package de.serdioa.common.pool;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -21,14 +20,15 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
     // @GuardedBy(lock)
     private final Map<K, Entry> entries = new HashMap<>();
 
-    // Read/write lock.
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
 
     private LockingSharedObjectPool(String name,
             PooledObjectFactory<K, P> pooledObjectFactory,
-            SharedObjectFactory<P, S> sharedObjectFactory) {
-        super(name, pooledObjectFactory, sharedObjectFactory);
+            SharedObjectFactory<P, S> sharedObjectFactory,
+            long idleDisposeTimeMillis,
+            int disposeThreads) {
+        super(name, pooledObjectFactory, sharedObjectFactory, idleDisposeTimeMillis, disposeThreads);
     }
 
 
@@ -363,6 +363,16 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
         // Factory for creating shared objects from pooled objects.
         protected SharedObjectFactory<P, S> sharedObjectFactory;
 
+        // Duration in milliseconds to keep idle pooled objects before disposing of them. Non-positive number means
+        // disposing of idle pooled objects immediately.
+        // By default idle pooled objects are disposed of immediately.
+        private long idleDisposeTimeMillis;
+
+        // The number of threads asynchronously disposing of idle objects.
+        // By default idle pooled objects are disposed of immediately, so no threads for asynchronous disposal
+        // are configured.
+        int disposeThreads;
+
 
         public Builder<K, S, P> setName(String name) {
             this.name = name;
@@ -382,6 +392,18 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
         }
 
 
+        public Builder<K, S, P> setIdleDisposeTimeMillis(long idleDisposeTimeMillis) {
+            this.idleDisposeTimeMillis = idleDisposeTimeMillis;
+            return this;
+        }
+
+
+        public Builder<K, S, P> setDisposeThreads(int disposeThreads) {
+            this.disposeThreads = disposeThreads;
+            return this;
+        }
+
+
         public LockingSharedObjectPool<K, S, P> build() {
             // The name is optional.
             if (this.pooledObjectFactory == null) {
@@ -390,8 +412,18 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
             if (this.sharedObjectFactory == null) {
                 throw new IllegalStateException("sharedObjectFactory is required");
             }
+            // A non-positive idleDisposeTimeMillis is valid, it indicates that idle objects shall be disposed of
+            // immediately.
 
-            return new LockingSharedObjectPool<>(this.name, this.pooledObjectFactory, this.sharedObjectFactory);
+            // If idleDisposeTimeMillis > 0, that is a postponed disposal is requested, the number of dispose threads
+            // must be > 0.
+            if (this.idleDisposeTimeMillis > 0 && this.disposeThreads <= 0) {
+                throw new IllegalStateException("idleDisposeTimeMillis (" + this.idleDisposeTimeMillis + ") > 0, "
+                        + "but disposeThreads (" + this.disposeThreads + ") <= 0");
+            }
+
+            return new LockingSharedObjectPool<>(this.name, this.pooledObjectFactory, this.sharedObjectFactory,
+                    this.idleDisposeTimeMillis, this.disposeThreads);
         }
     }
 }

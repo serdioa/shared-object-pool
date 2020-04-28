@@ -3,12 +3,8 @@ package de.serdioa.common.pool;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,17 +19,6 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
     // @GuardedBy(lock)
     private final Map<K, Entry> entries = new HashMap<>();
 
-    // Duration in milliseconds to keep idle pooled objects before disposing of them. Non-positive number means
-    // disposing of idle pooled objects immediately.
-    // If initializing a pooled object is an expensive operation, for example if it requires loading large amount
-    // of data from a remote source, and the number of pooled objects is not too high, it could make sense to keep
-    // idle pooled objects for some time, to prevent an expensive initialization of a pooled object will become required
-    // shortly afterwards.
-    private final long idleDisposeTimeMillis;
-
-    // The executor service for running disposals.
-    private final ScheduledExecutorService disposeExecutor;
-
     // Synchronization monitor.
     private final Object lock = new Object();
 
@@ -43,38 +28,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
             SharedObjectFactory<P, S> sharedObjectFactory,
             long idleDisposeTimeMillis,
             int disposeThreads) {
-        super(name, pooledObjectFactory, sharedObjectFactory);
-
-        this.idleDisposeTimeMillis = idleDisposeTimeMillis;
-
-        // Create an executor for disposals only if asynchronous disposal is configured.
-        if (this.idleDisposeTimeMillis > 0) {
-            ThreadFactory disposerThreadFactory = new ThreadFactory() {
-                private final AtomicInteger counter = new AtomicInteger();
-
-
-                @Override
-                public Thread newThread(Runnable r) {
-                    return new Thread(r, SynchronizedSharedObjectPool.this.name + "-" + counter.getAndDecrement());
-                }
-            };
-            this.disposeExecutor = Executors.newScheduledThreadPool(disposeThreads, disposerThreadFactory);
-        } else {
-            // Synchronous disposal is configured, no executor is required.
-            this.disposeExecutor = null;
-        }
-    }
-
-
-    @Override
-    public void dispose() {
-        super.dispose();
-
-        // If a disposal executor exist (that is, if an asynchronous disposal was configured), stop the executor
-        // without waiting for disposal tasks.
-        if (this.disposeExecutor != null) {
-            this.disposeExecutor.shutdownNow();
-        }
+        super(name, pooledObjectFactory, sharedObjectFactory, idleDisposeTimeMillis, disposeThreads);
     }
 
 
@@ -210,7 +164,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
 
                 if (delayBeforeDispose > 0) {
                     // Instead of disposing of the entry immediately, schedule to try again later.
-                    ScheduledFuture<?> disposeTask = this.disposeExecutor.schedule(() -> this.offerDispose(entry),
+                    ScheduledFuture<?> disposeTask = this.scheduleDisposeTask(() -> this.offerDispose(entry),
                             delayBeforeDispose, TimeUnit.MILLISECONDS);
                     entry.setDisposeTask(disposeTask);
 

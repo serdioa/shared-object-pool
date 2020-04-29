@@ -132,8 +132,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
             int entrySharedCount = entry.getSharedCount();
             if (entrySharedCount > 0) {
                 // The entry is providing some shared objects, so it can't be disposed of.
-                logger
-                        .trace("!!! The entry {} provides {} shared objects, skipping disposal", entry.getKey(), entrySharedCount);
+                logger.trace("!!! The entry {} provides {} shared objects, skipping disposal", entry.getKey(), entrySharedCount);
                 return;
             } else if (entrySharedCount == Entry.DISPOSED) {
                 // Another thread had already disposed of the entry. This could happens in the following scenario:
@@ -375,8 +374,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
                     this.sharedCount--;
                 }
 
-                logger
-                        .trace("!!! Inside entry {}: disposed of shared object, sharedCount={}", this.key, this.sharedCount);
+                logger.trace("!!! Inside entry {}: disposed of shared object, sharedCount={}", this.key, this.sharedCount);
 
                 if (this.sharedCount == 0) {
                     // This entry is not providing any shared objects anymore, and may be disposed of.

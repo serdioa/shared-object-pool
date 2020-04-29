@@ -9,30 +9,30 @@ import de.serdioa.common.pool.sample.PooledCounterFactory;
 import de.serdioa.common.pool.sample.SharedCounter;
 
 
-public class SynchronizedSharedObjectPoolValidateTest {
+public class LockingSharedObjectPoolValidateTest {
 
     public static void main(String[] args) throws Exception {
-        SynchronizedSharedObjectPoolValidateTest test = new SynchronizedSharedObjectPoolValidateTest();
+        LockingSharedObjectPoolValidateTest test = new LockingSharedObjectPoolValidateTest();
         test.runRepeated(2, 20, 1, 2000, 100);
     }
 
 
-    private SynchronizedSharedObjectPool<String, SharedCounter, PooledCounter> buildImmediatePool() {
+    private LockingSharedObjectPool<String, SharedCounter, PooledCounter> buildImmediatePool() {
         PooledObjectFactory<String, PooledCounter> pof = new PooledCounterFactory();
         SharedObjectFactory<PooledCounter, SharedCounter> sof = SynchronizedSharedObject.factory(SharedCounter.class);
 
-        return new SynchronizedSharedObjectPool.Builder<String, SharedCounter, PooledCounter>()
+        return new LockingSharedObjectPool.Builder<String, SharedCounter, PooledCounter>()
                 .setPooledObjectFactory(pof)
                 .setSharedObjectFactory(sof)
                 .build();
     }
 
 
-    private SynchronizedSharedObjectPool<String, SharedCounter, PooledCounter> buildDelayedPool(long disposeDelayMillis) {
+    private LockingSharedObjectPool<String, SharedCounter, PooledCounter> buildDelayedPool(long disposeDelayMillis) {
         PooledObjectFactory<String, PooledCounter> pof = new PooledCounterFactory();
         SharedObjectFactory<PooledCounter, SharedCounter> sof = SynchronizedSharedObject.factory(SharedCounter.class);
 
-        return new SynchronizedSharedObjectPool.Builder<String, SharedCounter, PooledCounter>()
+        return new LockingSharedObjectPool.Builder<String, SharedCounter, PooledCounter>()
                 .setPooledObjectFactory(pof)
                 .setSharedObjectFactory(sof)
                 .setDisposeThreads(1)
@@ -56,7 +56,7 @@ public class SynchronizedSharedObjectPoolValidateTest {
 
 
     private int run(int keys, int workers, int disposeDelayMillis, long durationMillis) throws InterruptedException {
-        SynchronizedSharedObjectPool<String, SharedCounter, PooledCounter> pool;
+        LockingSharedObjectPool<String, SharedCounter, PooledCounter> pool;
         if (disposeDelayMillis <= 0) {
             pool = buildImmediatePool();
         } else {

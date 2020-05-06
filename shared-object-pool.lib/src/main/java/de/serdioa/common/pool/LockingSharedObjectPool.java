@@ -159,7 +159,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
             int entrySharedCount = entry.getSharedCount();
             if (entrySharedCount > 0) {
                 // The entry is providing some shared objects, so it can't be disposed of.
-                // The entry is providing some shared objects, so it can't be disposed of.
                 logger.trace("!!! The entry {} provides {} shared objects, skipping disposal", entry.getKey(), entrySharedCount);
                 return;
             } else if (entrySharedCount == Entry.DISPOSED) {
@@ -415,7 +414,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
         }
 
 
-        synchronized void setDisposeTask(ScheduledFuture<?> disposeTask) {
+        void setDisposeTask(ScheduledFuture<?> disposeTask) {
             Lock entryExclusiveLock = this.exclusiveLock();
             entryExclusiveLock.lock();
             try {
@@ -443,7 +442,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
 
                 // If this entry was scheduled for disposal, attempt to cancel the dispose task.
                 // This entry will not be disposed of even if the task can not be cancelled (the task will not dispose
-                // of this entry if it provides any shared objects), but canelling the task reduces unnecessary load
+                // of this entry if it provides any shared objects), but cancelling the task reduces unnecessary load
                 // on the disposal executor.
                 if (this.disposeTask != null) {
                     this.disposeTask.cancel(true);

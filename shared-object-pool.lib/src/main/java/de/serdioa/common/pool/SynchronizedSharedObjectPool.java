@@ -228,10 +228,12 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
 
 
     public int getSharedObjectsCount(K key) {
+        Entry entry;
         synchronized (this.lock) {
-            Entry entry = this.entries.get(key);
-            return (entry == null ? 0 : entry.getSharedCount());
+            entry = this.entries.get(key);
         }
+
+        return (entry == null ? 0 : Math.max(0, entry.getSharedCount()));
     }
 
 

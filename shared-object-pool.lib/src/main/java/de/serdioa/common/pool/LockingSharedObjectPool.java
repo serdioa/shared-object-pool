@@ -275,7 +275,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
             poolReadLock.unlock();
         }
 
-        return (entry == null ? 0 : entry.getSharedCount());
+        return (entry == null ? 0 : Math.max(0, entry.getSharedCount()));
     }
 
 

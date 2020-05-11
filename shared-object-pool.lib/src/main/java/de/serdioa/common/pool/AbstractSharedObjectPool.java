@@ -4,6 +4,7 @@ import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -58,7 +59,9 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P> imp
             }
 
             ThreadFactory threadFactory = new DisposeExecutorThreadFactory(this.name);
-            return Executors.newScheduledThreadPool(disposeThreads, threadFactory);
+            ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(disposeThreads, threadFactory);
+            executor.setRemoveOnCancelPolicy(true);
+            return executor;
         } else {
             // Synchronous disposal is configured, no executor is required.
             return null;

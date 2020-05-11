@@ -13,7 +13,7 @@ public class SynchronizedSharedObjectPoolValidateTest {
 
     public static void main(String[] args) throws Exception {
         SynchronizedSharedObjectPoolValidateTest test = new SynchronizedSharedObjectPoolValidateTest();
-        test.runRepeated(2, 20, 1, 2000, 100);
+        test.runRepeated(4, 4, 1, 2000, 100);
     }
 
 

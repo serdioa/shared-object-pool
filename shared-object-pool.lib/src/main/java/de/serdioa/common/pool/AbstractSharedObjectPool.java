@@ -1,7 +1,6 @@
 package de.serdioa.common.pool;
 
 import java.util.Objects;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -124,5 +123,96 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P> imp
             return new Thread(r, this.name + "-disposer-" + counter.getAndIncrement());
         }
 
+    }
+
+
+    protected static class Builder<K, S extends SharedObject, P, SELF extends Builder<K, S, P, SELF>> {
+
+        // An optional name of the pool. The name is used for log messages and in names of background threads.
+        protected String name;
+
+        // Factory for creating new pooled objects.
+        protected PooledObjectFactory<K, P> pooledObjectFactory;
+
+        // Factory for creating shared objects from pooled objects.
+        protected SharedObjectFactory<P, S> sharedObjectFactory;
+
+        // Duration in milliseconds to keep idle pooled objects before disposing of them. Non-positive number means
+        // disposing of idle pooled objects immediately.
+        // By default idle pooled objects are disposed of immediately.
+        protected long idleDisposeTimeMillis;
+
+        // The number of threads asynchronously disposing of idle objects.
+        // By default idle pooled objects are disposed of immediately, so no threads for asynchronous disposal
+        // are configured.
+        protected int disposeThreads;
+
+        // Provide stack trace for tracking allocation of abandoned shared objects.
+        protected StackTraceProvider stackTraceProvider = new ThrowableStackTraceProvider();
+
+
+        public SELF setName(String name) {
+            this.name = name;
+            return self();
+        }
+
+
+        public SELF setPooledObjectFactory(PooledObjectFactory<K, P> pooledObjectFactory) {
+            this.pooledObjectFactory = pooledObjectFactory;
+            return self();
+        }
+
+
+        public SELF setSharedObjectFactory(SharedObjectFactory<P, S> sharedObjectFactory) {
+            this.sharedObjectFactory = sharedObjectFactory;
+            return self();
+        }
+
+
+        public SELF setIdleDisposeTimeMillis(long idleDisposeTimeMillis) {
+            this.idleDisposeTimeMillis = idleDisposeTimeMillis;
+            return self();
+        }
+
+
+        public SELF setDisposeThreads(int disposeThreads) {
+            this.disposeThreads = disposeThreads;
+            return self();
+        }
+
+
+        public SELF setStackTraceProvider(StackTraceProvider stackTraceProvider) {
+            this.stackTraceProvider = stackTraceProvider;
+            return self();
+        }
+
+
+        @SuppressWarnings("unchecked")
+        protected SELF self() {
+            return (SELF) this;
+        }
+
+
+        protected void validate() {
+            // The name is optional.
+            if (this.pooledObjectFactory == null) {
+                throw new IllegalStateException("pooledObjectFactory is required");
+            }
+            if (this.sharedObjectFactory == null) {
+                throw new IllegalStateException("sharedObjectFactory is required");
+            }
+            // A non-positive idleDisposeTimeMillis is valid, it indicates that idle objects shall be disposed of
+            // immediately.
+
+            // If idleDisposeTimeMillis > 0, that is a postponed disposal is requested, the number of dispose threads
+            // must be > 0.
+            if (this.idleDisposeTimeMillis > 0 && this.disposeThreads <= 0) {
+                throw new IllegalStateException("idleDisposeTimeMillis (" + this.idleDisposeTimeMillis + ") > 0, "
+                        + "but disposeThreads (" + this.disposeThreads + ") <= 0");
+            }
+            if (this.stackTraceProvider == null) {
+                throw new IllegalStateException("stackTraceProvider is required");
+            }
+        }
     }
 }

@@ -862,84 +862,10 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     }
 
 
-    public static class Builder<K, S extends SharedObject, P> {
-
-        // An optional name of the pool. The name is used for log messages and in names of background threads.
-        private String name;
-
-        // Factory for creating new pooled objects.
-        protected PooledObjectFactory<K, P> pooledObjectFactory;
-
-        // Factory for creating shared objects from pooled objects.
-        protected SharedObjectFactory<P, S> sharedObjectFactory;
-
-        // Duration in milliseconds to keep idle pooled objects before disposing of them. Non-positive number means
-        // disposing of idle pooled objects immediately.
-        // By default idle pooled objects are disposed of immediately.
-        private long idleDisposeTimeMillis;
-
-        // The number of threads asynchronously disposing of idle objects.
-        // By default idle pooled objects are disposed of immediately, so no threads for asynchronous disposal
-        // are configured.
-        private int disposeThreads;
-
-        // Provide stack trace for tracking allocation of abandoned shared objects.
-        private StackTraceProvider stackTraceProvider = new ThrowableStackTraceProvider();
-
-
-        public Builder<K, S, P> setName(String name) {
-            this.name = name;
-            return this;
-        }
-
-
-        public Builder<K, S, P> setPooledObjectFactory(PooledObjectFactory<K, P> pooledObjectFactory) {
-            this.pooledObjectFactory = pooledObjectFactory;
-            return this;
-        }
-
-
-        public Builder<K, S, P> setSharedObjectFactory(SharedObjectFactory<P, S> sharedObjectFactory) {
-            this.sharedObjectFactory = sharedObjectFactory;
-            return this;
-        }
-
-
-        public Builder<K, S, P> setIdleDisposeTimeMillis(long idleDisposeTimeMillis) {
-            this.idleDisposeTimeMillis = idleDisposeTimeMillis;
-            return this;
-        }
-
-
-        public Builder<K, S, P> setDisposeThreads(int disposeThreads) {
-            this.disposeThreads = disposeThreads;
-            return this;
-        }
-
-
-        public Builder<K, S, P> setStackTraceProvider(StackTraceProvider stackTraceProvider) {
-            this.stackTraceProvider = Objects.requireNonNull(stackTraceProvider);
-            return this;
-        }
-
+    public static class Builder<K, S extends SharedObject, P> extends AbstractSharedObjectPool.Builder<K, S, P, Builder<K, S, P>> {
 
         public ConcurrentSharedObjectPool<K, S, P> build() {
-            // The name is optional.
-            if (this.pooledObjectFactory == null) {
-                throw new IllegalStateException("pooledObjectFactory is required");
-            }
-            if (this.sharedObjectFactory == null) {
-                throw new IllegalStateException("sharedObjectFactory is required");
-            }
-            // A non-positive idleDisposeTimeMillis is valid, it indicates that idle objects shall be disposed of
-            // immediately.
-
-            // If idleDisposeTimeMillis > 0, that is a postponed disposal is requested, the number of dispose threads
-            // must be > 0.
-            if (this.idleDisposeTimeMillis > 0 && this.disposeThreads <= 0) {
-                throw new IllegalStateException("idleDisposeTimeMillis (" + this.idleDisposeTimeMillis + ") > 0, "
-                        + "but disposeThreads (" + this.disposeThreads + ") <= 0");
-            }
+            this.validate();
 
             // No need to explicitly check stackTraceProvider: default value is not null, and the setter protects
             // against null.

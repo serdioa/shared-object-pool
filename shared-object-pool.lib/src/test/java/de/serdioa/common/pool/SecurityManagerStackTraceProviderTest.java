@@ -7,20 +7,20 @@ import org.junit.Before;
 import org.junit.Test;
 
 
-public class SecurityManagerStackTraceTest {
+public class SecurityManagerStackTraceProviderTest {
 
-    private StackTrace stackTrace;
+    private StackTraceProvider stackTraceProvider;
 
 
     @Before
     public void setUp() {
-        this.stackTrace = new SecurityManagerStackTrace();
+        this.stackTraceProvider = new SecurityManagerStackTraceProvider();
     }
 
 
     @Test
     public void testProvide() {
-        StackTraceElement[] trace = this.stackTrace.provide();
+        StackTraceElement[] trace = this.stackTraceProvider.provide();
 
         assertTrue(trace.length > 0);
         assertEquals(this.getClass().getCanonicalName(), trace[0].getClassName());

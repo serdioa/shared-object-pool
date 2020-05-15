@@ -6,20 +6,20 @@ import org.junit.Before;
 import org.junit.Test;
 
 
-public class NoOpStackTraceTest {
+public class NoOpStackTraceProviderTest {
 
-    private StackTrace stackTrace;
+    private StackTraceProvider stackTraceProvider;
 
 
     @Before
     public void setUp() {
-        this.stackTrace = new NoOpStackTrace();
+        this.stackTraceProvider = new NoOpStackTraceProvider();
     }
 
 
     @Test
     public void testProvide() {
-        StackTraceElement[] trace = this.stackTrace.provide();
+        StackTraceElement[] trace = this.stackTraceProvider.provide();
         assertEquals(0, trace.length);
     }
 }

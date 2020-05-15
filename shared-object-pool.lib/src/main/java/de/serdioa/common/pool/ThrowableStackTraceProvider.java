@@ -4,11 +4,11 @@ import java.util.Arrays;
 
 
 /**
- * An implementation of the {@link StackTrace} which uses a {@link Throwable} to obtain the current call stack. This
+ * An implementation of the {@link StackTraceProvider} which uses a {@link Throwable} to obtain the current call stack. This
  * implementation is the slowest, but the most detailed. It may provide even line numbers, if the code was compiled with
  * the required information.
  */
-public class ThrowableStackTrace implements StackTrace {
+public class ThrowableStackTraceProvider implements StackTraceProvider {
 
     @Override
     public StackTraceElement[] provide() {

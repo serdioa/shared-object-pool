@@ -5,16 +5,16 @@ import java.security.PrivilegedAction;
 
 
 /**
- * An implementation of the {@link StackTrace} which uses a {@link SecurityManager} to obtain the current call stack.
+ * An implementation of the {@link StackTraceProvider} which uses a {@link SecurityManager} to obtain the current call stack.
  * This implementation is faster than {@link ThrowableStackTrace}, but it provides only class names in the call stack,
  * method names are not available.
  */
-public class SecurityManagerStackTrace implements StackTrace {
+public class SecurityManagerStackTraceProvider implements StackTraceProvider {
 
     private StackFillingSecurityManager securityManager;
 
 
-    public SecurityManagerStackTrace() {
+    public SecurityManagerStackTraceProvider() {
         this.securityManager = AccessController
                 .doPrivileged((PrivilegedAction<StackFillingSecurityManager>) StackFillingSecurityManager::new);
     }

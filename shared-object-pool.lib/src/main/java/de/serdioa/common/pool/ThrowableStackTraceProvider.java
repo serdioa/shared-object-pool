@@ -20,4 +20,20 @@ public class ThrowableStackTraceProvider implements StackTraceProvider {
         // up to him.
         return new StackTrace(Arrays.copyOfRange(elements, 1, elements.length));
     }
+
+
+    @Override
+    public StackTrace provide(int skipFrames) {
+        // Create an instance of Throwable and get the call stack.
+        Throwable t = new Throwable();
+        StackTraceElement[] elements = t.getStackTrace();
+
+        if (elements.length < 2 + skipFrames) {
+            return StackTrace.empty();
+        }
+
+        // Remove the top element of the call stack, which is this method, so that the caller gets only call stack
+        // up to him.
+        return new StackTrace(Arrays.copyOfRange(elements, 1 + skipFrames, elements.length));
+    }
 }

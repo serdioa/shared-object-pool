@@ -22,29 +22,36 @@ public class SecurityManagerStackTraceProvider implements StackTraceProvider {
 
     @Override
     public StackTrace provide() {
-        return this.securityManager.provideStackTrace();
+        return this.securityManager.provideStackTrace(0);
+    }
+
+
+    @Override
+    public StackTrace provide(int skipFrames) {
+        return this.securityManager.provideStackTrace(skipFrames);
     }
 
 
     private class StackFillingSecurityManager extends SecurityManager {
 
-        public StackTrace provideStackTrace() {
+        public StackTrace provideStackTrace(int skipFrames) {
             Class<?>[] classContext = this.getClassContext();
             int length = classContext.length;
 
             // We expect that the context has more than 2 elements: this method,
             // the method SecurityManagerStackTrace.provide(), and the caller.
             // If our expectation is wrong, return an empty array.
-            if (length < 3) {
+            if (length < 3 + skipFrames) {
                 return StackTrace.empty();
             }
 
             // Create a stack trace based on the context, removing top 2 elements described above.
-            StackTraceElement[] elements = new StackTraceElement[length - 2];
+            StackTraceElement[] elements = new StackTraceElement[length - 2 - skipFrames];
 
-            for (int i = length - 3; i >= 0; --i) {
+            for (int i = length - 3 - skipFrames; i >= 0; --i) {
                 // Only class names are available, method names are not available.
-                elements[i] = new StackTraceElement(classContext[i + 2].getName(), "<unavailable>", null, -1);
+                elements[i] =
+                        new StackTraceElement(classContext[i + 2 + skipFrames].getName(), "<unavailable>", null, -1);
             }
 
             return new StackTrace(elements);

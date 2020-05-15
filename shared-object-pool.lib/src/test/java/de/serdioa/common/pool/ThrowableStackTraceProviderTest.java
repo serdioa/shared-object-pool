@@ -3,18 +3,14 @@ package de.serdioa.common.pool;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-import org.junit.Before;
 import org.junit.Test;
 
 
-public class ThrowableStackTraceProviderTest {
+public class ThrowableStackTraceProviderTest extends AbstractStackTraceProviderTest {
 
-    private StackTraceProvider stackTraceProvider;
-
-
-    @Before
-    public void setUp() {
-        this.stackTraceProvider = new ThrowableStackTraceProvider();
+    @Override
+    protected StackTraceProvider buildStackTraceProvider() {
+        return new ThrowableStackTraceProvider();
     }
 
 
@@ -31,20 +27,46 @@ public class ThrowableStackTraceProviderTest {
 
     @Test
     public void testProvideDeep() {
-        StackTrace stackTrace = new AbstractStackTraceProviderTest.Wrapper(this.stackTraceProvider::provide, 3).get();
+        StackTrace stackTrace = this.test_5(0);
         StackTraceElement[] elements = stackTrace.getElements();
 
         // Expected:
-        // * 3 frames are from Wrapper,
-        // * 1 frame from this method,
+        // * AbstractStackTraceProviderTest.test_1()
+        // * AbstractStackTraceProviderTest.test_2()
+        // * AbstractStackTraceProviderTest.test_3()
+        // * AbstractStackTraceProviderTest.test_4()
+        // * AbstractStackTraceProviderTest.test_5()
+        // * this method,
         // * the rest depends on JUnit framework and is not tested.
-        //
-        // Note that the ThrowableStackTraceProvider excludes lambda expressions from the stack trace,
-        // the same as Throwable.printStackTrace().
+        assertTrue(elements.length > 5);
+        for (int i = 0; i < 5; ++i) {
+            assertEquals(this.getClass().getSuperclass().getName(), elements[i].getClassName());
+            assertEquals("test_" + (i + 1), elements[i].getMethodName());
+        }
+        assertEquals(this.getClass().getName(), elements[5].getClassName());
+        assertEquals("testProvideDeep", elements[5].getMethodName());
+    }
+
+
+    @Test
+    public void testProvideDeepSkip() {
+        StackTrace stackTrace = this.test_5(2);
+        StackTraceElement[] elements = stackTrace.getElements();
+
+        // Expected:
+        // * AbstractStackTraceProviderTest.test_1() - skipped due to argument skipFrames = 2
+        // * AbstractStackTraceProviderTest.test_2() - skipped due to argument skipFrames = 2
+        // * AbstractStackTraceProviderTest.test_3()
+        // * AbstractStackTraceProviderTest.test_4()
+        // * AbstractStackTraceProviderTest.test_5()
+        // * this method,
+        // * the rest depends on JUnit framework and is not tested.
         assertTrue(elements.length > 3);
-        assertEquals(AbstractStackTraceProviderTest.Wrapper.class.getName(), elements[0].getClassName());
-        assertEquals(AbstractStackTraceProviderTest.Wrapper.class.getName(), elements[1].getClassName());
-        assertEquals(AbstractStackTraceProviderTest.Wrapper.class.getName(), elements[2].getClassName());
+        for (int i = 0; i < 3; ++i) {
+            assertEquals(this.getClass().getSuperclass().getName(), elements[i].getClassName());
+            assertEquals("test_" + (i + 3), elements[i].getMethodName());
+        }
         assertEquals(this.getClass().getName(), elements[3].getClassName());
+        assertEquals("testProvideDeepSkip", elements[3].getMethodName());
     }
 }

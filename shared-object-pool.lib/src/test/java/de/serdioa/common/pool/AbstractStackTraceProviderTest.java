@@ -1,51 +1,44 @@
 package de.serdioa.common.pool;
 
-import java.util.Objects;
-import java.util.function.Supplier;
+import org.junit.Before;
 
 
-public class AbstractStackTraceProviderTest {
+public abstract class AbstractStackTraceProviderTest {
 
-    /**
-     * A simple wrapper to simulate method calls with different call depth.
-     */
-    public static class Wrapper implements Supplier<StackTrace> {
-
-        private final Supplier<StackTrace> supplier;
-        private final int depth;
+    protected StackTraceProvider stackTraceProvider;
 
 
-        public Wrapper(Supplier<StackTrace> supplier) {
-            this(supplier, 1);
-        }
+    @Before
+    public void setUp() {
+        this.stackTraceProvider = this.buildStackTraceProvider();
+    }
 
 
-        public Wrapper(Supplier<StackTrace> supplier, int depth) {
-            if (depth < 1) {
-                throw new IllegalArgumentException("depth < 1");
-            }
-
-            this.supplier = Objects.requireNonNull(supplier);
-            this.depth = depth;
-        }
+    protected abstract StackTraceProvider buildStackTraceProvider();
 
 
-        @Override
-        public StackTrace get() {
-            if (this.depth <= 1) {
-                return this.supplier.get();
-            } else {
-                return this.get(this.depth - 1);
-            }
-        }
+    // Several helper function for testing multi-level stack traces.
+    protected StackTrace test_1(int skipFrames) {
+        return this.stackTraceProvider.provide(skipFrames);
+    }
 
 
-        private StackTrace get(int depth) {
-            if (depth <= 1) {
-                return this.supplier.get();
-            } else {
-                return this.get(depth - 1);
-            }
-        }
+    protected StackTrace test_2(int skipFrames) {
+        return this.test_1(skipFrames);
+    }
+
+
+    protected StackTrace test_3(int skipFrames) {
+        return this.test_2(skipFrames);
+    }
+
+
+    protected StackTrace test_4(int skipFrames) {
+        return this.test_3(skipFrames);
+    }
+
+
+    protected StackTrace test_5(int skipFrames) {
+        return this.test_4(skipFrames);
     }
 }

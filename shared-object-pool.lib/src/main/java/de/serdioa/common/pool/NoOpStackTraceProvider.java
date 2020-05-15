@@ -11,4 +11,10 @@ public class NoOpStackTraceProvider implements StackTraceProvider {
     public StackTrace provide() {
         return StackTrace.empty();
     }
+
+
+    @Override
+    public StackTrace provide(int skipFrames) {
+        return StackTrace.empty();
+    }
 }

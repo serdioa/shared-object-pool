@@ -11,5 +11,5 @@ public interface StackTraceProvider {
      * 
      * @return an array of stack trace elements representing the current call stack.
      */
-    StackTraceElement [] provide();
+    StackTrace provide();
 }

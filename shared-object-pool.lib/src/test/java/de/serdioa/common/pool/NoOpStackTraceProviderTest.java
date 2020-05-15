@@ -19,7 +19,8 @@ public class NoOpStackTraceProviderTest {
 
     @Test
     public void testProvide() {
-        StackTraceElement[] trace = this.stackTraceProvider.provide();
-        assertEquals(0, trace.length);
+        StackTrace stackTrace = this.stackTraceProvider.provide();
+        StackTraceElement[] elements = stackTrace.getElements();
+        assertEquals(0, elements.length);
     }
 }

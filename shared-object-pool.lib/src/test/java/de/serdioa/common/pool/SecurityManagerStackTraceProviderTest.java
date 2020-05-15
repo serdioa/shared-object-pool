@@ -20,10 +20,11 @@ public class SecurityManagerStackTraceProviderTest {
 
     @Test
     public void testProvide() {
-        StackTraceElement[] trace = this.stackTraceProvider.provide();
+        StackTrace stackTrace = this.stackTraceProvider.provide();
+        StackTraceElement[] elements = stackTrace.getElements();
 
-        assertTrue(trace.length > 0);
-        assertEquals(this.getClass().getCanonicalName(), trace[0].getClassName());
+        assertTrue(elements.length > 0);
+        assertEquals(this.getClass().getCanonicalName(), elements[0].getClassName());
         // Method name is not available from this stack trace provider.
     }
 }

@@ -20,10 +20,11 @@ public class ThrowableStackTraceProviderTest {
 
     @Test
     public void testProvide() {
-        StackTraceElement[] trace = this.stackTraceProvider.provide();
+        StackTrace stackTrace = this.stackTraceProvider.provide();
+        StackTraceElement[] elements = stackTrace.getElements();
 
-        assertTrue(trace.length > 0);
-        assertEquals(this.getClass().getName(), trace[0].getClassName());
-        assertEquals("testProvide", trace[0].getMethodName());
+        assertTrue(elements.length > 0);
+        assertEquals(this.getClass().getName(), elements[0].getClassName());
+        assertEquals("testProvide", elements[0].getMethodName());
     }
 }

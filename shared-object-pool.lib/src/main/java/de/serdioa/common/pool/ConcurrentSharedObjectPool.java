@@ -28,6 +28,9 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     // Should we actually dispose unused entries?
     private boolean disposeUnusedEntries = true;
 
+    // Provide stack trace for tracking allocation of abandoned shared objects.
+    private final StackTraceProvider stackTraceProvider;
+
     // A queue with phantom references on shared objects. We keep them to be able to find shared objects which were not
     // properly disposed of.
     private final ReferenceQueue<S> sharedObjectsRefQueue = new ReferenceQueue<>();
@@ -39,13 +42,18 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     // The synchronization lock for lifecycle events (startup / shutdown).
     private final Object lifecycleMonitor = new Object();
 
+
     private ConcurrentSharedObjectPool(String name,
             PooledObjectFactory<K, P> pooledObjectFactory,
             SharedObjectFactory<P, S> sharedObjectFactory,
             long idleDisposeTimeMillis,
-            int disposeThreads) {
+            int disposeThreads,
+            StackTraceProvider stackTraceProvider) {
 
         super(name, pooledObjectFactory, sharedObjectFactory, idleDisposeTimeMillis, disposeThreads);
+
+        this.stackTraceProvider = Objects.requireNonNull(stackTraceProvider);
+
         synchronized (this.lifecycleMonitor) {
             this.sharedObjectsRipper = new Thread(this::reapSharedObjects, this.name + "-ripper");
             this.sharedObjectsRipper.setDaemon(true);
@@ -559,11 +567,15 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
                 S sharedObject = ConcurrentSharedObjectPool.this.createSharedObject(this.pooledObject,
                         disposeDirectCallback);
 
+                // Take the stack trace to track abandoned shared objects. We skip several call frames on the top
+                // to keep only the caller's methods in the stack trace.
+                StackTrace stackTrace = ConcurrentSharedObjectPool.this.stackTraceProvider.provide(3);
+
                 // Construct a phantom reference on the shared object and register it in the reference queue.
                 // The reaper thread will invoke disposePhantomRefCallback if the shared object is not properly
                 // disposed of.
                 SharedObjectPhantomReference<K, S> sharedObjectPhantomRef = new SharedObjectPhantomReference<>(this.key,
-                        sharedObjectId, sharedObject, disposePhantomRefCallback, phantomReferenceKey,
+                        sharedObjectId, stackTrace, sharedObject, disposePhantomRefCallback, phantomReferenceKey,
                         ConcurrentSharedObjectPool.this.sharedObjectsRefQueue);
                 sharedObjectPhantomRefHolder.ref = sharedObjectPhantomRef;
 
@@ -635,8 +647,8 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
                                 // Set the time when the last shared object was returned.
                                 this.lastReturnTime = System.currentTimeMillis();
 
-                                logger
-                                        .trace("!!! Inside entry {}: disposed of last shared object, will offer dispose", this.key);
+                                logger.trace("!!! Inside entry {}: disposed of last shared object, will offer dispose",
+                                        this.key);
                             }
                         }
                     } else {
@@ -708,8 +720,9 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
                         + "The shared object may have been not been properly disposed of. "
                         + "In seldom cases Java runtime optimization may cause GC to claim the object before "
                         + "the proper dispose is finished. In such case, below you should find an explanation "
-                        + "from the proper dispose attempt with the same shared object ID",
-                        this.key, sharedObjectPhantomRef.getSharedObjectId());
+                        + "from the proper dispose attempt with the same shared object ID. "
+                        + "The shared object has been allocated\n{}",
+                        this.key, sharedObjectPhantomRef.getSharedObjectId(), sharedObjectPhantomRef.getStackTrace());
             }
 
             int currentSharedCount = this.sharedCount.get();
@@ -748,6 +761,9 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         private final K key;
         private final long sharedObjectId;
 
+        // The stack trace taken when the shared object has been allocated, to track abandoned shared objects.
+        private final StackTrace stackTrace;
+
         // A callback to be invoked to dispose of the shared object.
         private final Runnable disposeCallback;
 
@@ -762,11 +778,13 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         private boolean disposedDirect;
 
 
-        SharedObjectPhantomReference(K key, long sharedObjectId, S referent, Runnable disposeCallback,
+        SharedObjectPhantomReference(K key, long sharedObjectId, StackTrace stackTrace,
+                S referent, Runnable disposeCallback,
                 Object phantomReferenceKey, ReferenceQueue<? super S> queue) {
             super(referent, queue);
             this.key = Objects.requireNonNull(key);
             this.sharedObjectId = sharedObjectId;
+            this.stackTrace = Objects.requireNonNull(stackTrace);
             this.disposeCallback = Objects.requireNonNull(disposeCallback);
             this.phantomReferenceKey = Objects.requireNonNull(phantomReferenceKey);
         }
@@ -779,6 +797,11 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
 
         public long getSharedObjectId() {
             return this.sharedObjectId;
+        }
+
+
+        public StackTrace getStackTrace() {
+            return this.stackTrace;
         }
 
 
@@ -858,7 +881,10 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         // The number of threads asynchronously disposing of idle objects.
         // By default idle pooled objects are disposed of immediately, so no threads for asynchronous disposal
         // are configured.
-        int disposeThreads;
+        private int disposeThreads;
+
+        // Provide stack trace for tracking allocation of abandoned shared objects.
+        private StackTraceProvider stackTraceProvider = new ThrowableStackTraceProvider();
 
 
         public Builder<K, S, P> setName(String name) {
@@ -891,6 +917,12 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         }
 
 
+        public Builder<K, S, P> setStackTraceProvider(StackTraceProvider stackTraceProvider) {
+            this.stackTraceProvider = Objects.requireNonNull(stackTraceProvider);
+            return this;
+        }
+
+
         public ConcurrentSharedObjectPool<K, S, P> build() {
             // The name is optional.
             if (this.pooledObjectFactory == null) {
@@ -909,8 +941,10 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
                         + "but disposeThreads (" + this.disposeThreads + ") <= 0");
             }
 
+            // No need to explicitly check stackTraceProvider: default value is not null, and the setter protects
+            // against null.
             return new ConcurrentSharedObjectPool<>(this.name, this.pooledObjectFactory, this.sharedObjectFactory,
-                    this.idleDisposeTimeMillis, this.disposeThreads);
+                    this.idleDisposeTimeMillis, this.disposeThreads, this.stackTraceProvider);
         }
     }
 }

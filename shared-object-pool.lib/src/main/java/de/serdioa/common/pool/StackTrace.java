@@ -27,7 +27,7 @@ public class StackTrace {
     public String toString() {
         // Fast-track if stack trace is not available.
         if (this.elements.length == 0) {
-            return "\tunavailable\n";
+            return "\tallocation position is unavailable\n";
         }
 
         StringBuilder sb = new StringBuilder();

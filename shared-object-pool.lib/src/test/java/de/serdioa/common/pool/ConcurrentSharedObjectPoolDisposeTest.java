@@ -37,6 +37,7 @@ public class ConcurrentSharedObjectPoolDisposeTest {
         return new ConcurrentSharedObjectPool.Builder<String, SharedCounter, PooledCounter>()
                 .setPooledObjectFactory(pof)
                 .setSharedObjectFactory(sof)
+                .setStackTraceProvider(new NoOpStackTraceProvider())
                 .build();
     }
 

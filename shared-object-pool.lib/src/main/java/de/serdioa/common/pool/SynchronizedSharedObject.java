@@ -37,6 +37,10 @@ public class SynchronizedSharedObject implements InvocationHandler {
     // @GuardedBy(mutex)
     private Object sharedObject;
 
+    // If this shared object has been disposed of, was it disposed of by the shared objects pool?
+    // @GuardedBy(mutex)
+    private boolean disposedByPool;
+
     // Synchronization lock for the lifecycle and accessing the pooled object.
     private final Object mutex = new Object();
 
@@ -68,7 +72,11 @@ public class SynchronizedSharedObject implements InvocationHandler {
     private Object invokePooled(Method method, Object[] args) throws Throwable {
         synchronized (this.mutex) {
             if (this.sharedObject == null) {
-                throw new IllegalStateException("Method called on disposed dynamic shared object: " + method);
+                if (this.disposedByPool) {
+                    throw new IllegalStateException("Method called on dynamic shared object disposed by the pool: " + method);
+                } else {
+                    throw new IllegalStateException("Method called on disposed dynamic shared object: " + method);
+                }
             }
 
             return method.invoke(this.pooledObject, args);
@@ -79,7 +87,18 @@ public class SynchronizedSharedObject implements InvocationHandler {
     private void dispose() {
         synchronized (this.mutex) {
             if (this.sharedObject == null) {
-                throw new IllegalStateException("Method dispose() called on already disposed dynamic shared object");
+                // This shared object already has been disposed of.
+                if (this.disposedByPool) {
+                    // If it has been disposed by the pool when the complete pool has been disposed, and now a client
+                    // attemps to dispose of the object again, just return: we have nothing to do (this shared object
+                    // already has been disposed of), and it is not an error, but a possible normal case during shutdown
+                    // of the application.
+                    return;
+                } else {
+                    // On the other hand, if this shared object has been disposed of by a client, and now a client
+                    // attempts to dispose of this shared object again, it indicates an error.
+                    throw new IllegalStateException("Method dispose() called on already disposed dynamic shared object");
+                }
             }
 
             try {
@@ -91,6 +110,27 @@ public class SynchronizedSharedObject implements InvocationHandler {
 
             // Mark this invocation handler as disposed, and allow to GC the shared object proxy.
             this.sharedObject = null;
+        }
+    }
+
+
+    private void disposeByPool() {
+        synchronized (this.mutex) {
+            if (this.sharedObject == null) {
+                // This shared object already has been disposed of.
+                if (this.disposedByPool) {
+                    throw new IllegalStateException("Pool attempts to dispose of a dynamic shared object already disposed of by the pool");
+                } else {
+                    throw new IllegalStateException("Pool attempts to dispose of an already disposed dynamic shared object");
+                }
+            }
+
+            // When disposing by the pool, do not call the dispose callback: the pool disposes of the shared object
+            // itself, and we do not need to notify it back.
+            //
+            // Mark this invocation handler as disposed, and allow to GC the shared object proxy.
+            this.sharedObject = null;
+            this.disposedByPool = true;
         }
     }
 
@@ -130,6 +170,22 @@ public class SynchronizedSharedObject implements InvocationHandler {
      * @return a factory for creating shared objects with the specified type.
      */
     public static <S extends SharedObject, P> SharedObjectFactory<P, S> factory(Class<? extends S> type) {
-        return (pooledObject, disposeCallback) -> SynchronizedSharedObject.create(type, pooledObject, disposeCallback);
+        return new SharedObjectFactory<P, S>() {
+            @Override
+            public S createShared(P pooledObject, Runnable disposeCallback) {
+                return SynchronizedSharedObject.create(type, pooledObject, disposeCallback);
+            }
+
+
+            @Override
+            public void disposeByPool(S sharedObject) {
+                if (Proxy.isProxyClass(sharedObject.getClass())) {
+                 Object invocationHandler = Proxy.getInvocationHandler(sharedObject);
+                    ((SynchronizedSharedObject) invocationHandler).disposeByPool();
+                } else {
+                    ((SynchronizedSharedObject) sharedObject).disposeByPool();
+                }
+            }
+        };
     }
 }

@@ -1,16 +1,17 @@
 package de.serdioa.common.pool;
 
+import de.serdioa.common.pool.sample.LockingSharedCounter;
 import de.serdioa.common.pool.sample.PooledCounter;
 import de.serdioa.common.pool.sample.SharedCounter;
 
 
 /**
- * Unit tests for reflection-based {@link LockingSharedObject}.
+ * Unit tests for an manually written {@link LockingSharedCounter}.
  */
-public class LockingSharedObjectTest extends AbstractSharedObjectTest {
+public class LockingSharedCounterTest extends AbstractSharedObjectTest {
 
     @Override
     protected SharedObjectFactory<PooledCounter, SharedCounter> sharedObjectFactory() {
-        return LockingSharedObject.factory(SharedCounter.class);
+        return LockingSharedCounter.factory();
     }
 }

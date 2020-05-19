@@ -1,6 +1,7 @@
 package de.serdioa.common.pool;
 
 import de.serdioa.common.pool.sample.PooledCounter;
+import de.serdioa.common.pool.sample.SharedCounter;
 
 
 /**
@@ -9,7 +10,7 @@ import de.serdioa.common.pool.sample.PooledCounter;
 public class SynchronizedSharedObjectTest extends AbstractSharedObjectTest {
 
     @Override
-    protected SharedObjectFactory<PooledCounter, ? extends SharedCounter> sharedObjectFactory() {
+    protected SharedObjectFactory<PooledCounter, SharedCounter> sharedObjectFactory() {
         return SynchronizedSharedObject.factory(SharedCounter.class);
     }
 }

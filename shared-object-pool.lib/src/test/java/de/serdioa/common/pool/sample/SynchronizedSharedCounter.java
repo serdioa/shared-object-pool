@@ -4,6 +4,7 @@ import de.serdioa.common.pool.SharedObject;
 
 import java.util.Objects;
 
+import de.serdioa.common.pool.SharedObjectFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,6 +16,20 @@ public class SynchronizedSharedCounter implements SharedCounter {
 
     private static final Logger logger = LoggerFactory.getLogger(SynchronizedSharedCounter.class);
 
+    private static final SharedObjectFactory<PooledCounter, SharedCounter> FACTORY =
+            new SharedObjectFactory<PooledCounter, SharedCounter>() {
+        @Override
+        public SharedCounter createShared(PooledCounter pooledObject, Runnable disposeCallback) {
+            return new SynchronizedSharedCounter(pooledObject, disposeCallback);
+        }
+
+
+        @Override
+        public void disposeByPool(SharedCounter sharedObject) {
+            ((SynchronizedSharedCounter) sharedObject).disposeByPool();
+        }
+    };
+
     private final String key;
     private final PooledCounter pooledCounter;
     private final Runnable disposeCallback;
@@ -23,6 +38,7 @@ public class SynchronizedSharedCounter implements SharedCounter {
 
     // @GuardedBy(mutex)
     private boolean disposed = false;
+    private boolean disposedByPool;
 
     private final Object mutex = new Object();
 
@@ -39,19 +55,54 @@ public class SynchronizedSharedCounter implements SharedCounter {
     @Override
     public void dispose() {
         synchronized (this.mutex) {
-            if (!this.disposed) {
-                logger.trace("Disposing of SharedCounter[{}]", this.key);
-                this.disposed = true;
-                this.disposeCallback.run();
-
-                // This code actually never executes, but since dummy is volatile, JVM can't optimize it away
-                // and can't GC this object before the disposeCallback() above is finished.
-                if (this.dummy) {
-                    this.get();
+            if (this.disposed) {
+                // This shared object already has been disposed of.
+                if (this.disposedByPool) {
+                    // If it has been disposed by the pool when the complete pool has been disposed, and now a client
+                    // attemps to dispose of the object again, just return: we have nothing to do (this shared object
+                    // already has been disposed of), and it is not an error, but a possible normal case during shutdown
+                    // of the application.
+                    return;
+                } else {
+                    // On the other hand, if this shared object has been disposed of by a client, and now a client
+                    // attempts to dispose of this shared object again, it indicates an error.
+                    throw new IllegalStateException("Method dispose() called on already disposed SharedCounter["
+                            + this.key + "]");
                 }
-            } else {
-                logger.trace("Skipped disposing of SharedCounter[{}] - already disposed", this.key);
             }
+
+            logger.trace("Disposing of SharedCounter[{}]", this.key);
+            this.disposed = true;
+            this.disposeCallback.run();
+
+            // This code actually never executes, but since dummy is volatile, JVM can't optimize it away
+            // and can't GC this object before the disposeCallback() above is finished.
+            if (this.dummy) {
+                this.get();
+            }
+        }
+    }
+
+
+    private void disposeByPool() {
+        synchronized (this.mutex) {
+            if (this.disposed) {
+                // This shared object already has been disposed of.
+                if (this.disposedByPool) {
+                    throw new IllegalStateException("Pool attempts to dispose of a SharedCounter[" + this.key
+                            + "] already disposed of by the pool");
+                } else {
+                    throw new IllegalStateException("Pool attempts to dispose of an already disposed SharedCounter ["
+                            + this.key + "]");
+                }
+            }
+
+            // When disposing by the pool, do not call the dispose callback: the pool disposes of the shared object
+            // itself, and we do not need to notify it back.
+            //
+            // Mark this invocation handler as disposed, and allow to GC the shared object proxy.
+            this.disposed = true;
+            this.disposedByPool = true;
         }
     }
 
@@ -93,7 +144,16 @@ public class SynchronizedSharedCounter implements SharedCounter {
 
     private void ensureActive() {
         if (this.disposed) {
-            throw new IllegalStateException("SharedCounter[" + this.key + "] is already disposed of");
+            if (this.disposedByPool) {
+                throw new IllegalStateException("SharedCounter[" + this.key + "] is already disposed of by the pool");
+            } else {
+                throw new IllegalStateException("SharedCounter[" + this.key + "] is already disposed of");
+            }
         }
+    }
+
+
+    public static SharedObjectFactory<PooledCounter, SharedCounter> factory() {
+        return SynchronizedSharedCounter.FACTORY;
     }
 }

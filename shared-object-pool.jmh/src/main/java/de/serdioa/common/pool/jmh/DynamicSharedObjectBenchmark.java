@@ -1,7 +1,9 @@
-package de.serdioa.common.pool;
+package de.serdioa.common.pool.jmh;
 
 import java.util.concurrent.TimeUnit;
 
+import de.serdioa.common.pool.LockingSharedObject;
+import de.serdioa.common.pool.SharedObject;
 import de.serdioa.common.pool.sample.Counter;
 import de.serdioa.common.pool.sample.PooledCounter;
 import de.serdioa.common.pool.sample.LockingSharedCounter;

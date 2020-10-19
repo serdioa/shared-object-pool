@@ -1,4 +1,4 @@
-package de.serdioa.common.pool;
+package de.serdioa.common.pool.jmh;
 
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
@@ -6,6 +6,9 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import de.serdioa.common.pool.LockingSharedObject;
+import de.serdioa.common.pool.SharedObject;
+import de.serdioa.common.pool.SynchronizedSharedObject;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Mode;

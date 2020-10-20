@@ -17,7 +17,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
-// Simple implementation using concurrent map.
+/**
+ * An implementation of an {@link SharedObjectPool} using concurrent map.
+ * 
+ * @param <K> the type of keys used to access shared objects provided by this pool.
+ * @param <S> the type of shared objects provided by this pool.
+ * @param <P> the type of implementation objects backing shared objects provided by this pool.
+ */
 public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends AbstractSharedObjectPool<K, S, P> {
 
     private static final Logger logger = LoggerFactory.getLogger(ConcurrentSharedObjectPool.class);
@@ -590,8 +596,15 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
                 // This entry will not be disposed of even if the task can not be cancelled (the task will not dispose
                 // of this entry if it provides any shared objects), but cancelling the task reduces unnecessary load
                 // on the disposal executor.
-                if (this.disposeTask != null) {
-                    this.disposeTask.cancel(true);
+                // Since we are holding a shared lock, it is possible that multiple threads will attempt to cancel
+                // the same task simultaneously. While cancelling a task multiple times does not cause any error,
+                // accessing a variable which was set to null by another thread is. To prevent such exception, we have
+                // to get a local copy of the variable.
+                // Note that another thread could not set a new task in parallel, because the method setDisposeTask()
+                // requires an exclusive lock.
+                ScheduledFuture<?> disposeTaskSnapshot = this.disposeTask;
+                if (disposeTaskSnapshot != null) {
+                    disposeTaskSnapshot.cancel(true);
                     this.disposeTask = null;
                     logger.trace("!!! Inside entry {}: cancelled dispose task", this.key);
                 }
@@ -620,8 +633,8 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
                 // * The most obvious scenario is if the shared object is not properly protected agains calling
                 // dispose() from multiple threads.
                 // * More subtle case is when this method is invoked simultaneously explicitly by the user,
-                // and implicitly by the reaper thread. I have observed such behavour to happen if the shared object
-                // is not used after the method dispose() is invoked, which is a pretty normal case. In such case
+                // and implicitly by the reaper thread. I have observed such behavour sometimes to happen if the shared
+                // object is not used after the method dispose() is invoked, which is a pretty normal case. In such case
                 // the HotSpot optimizer may find that the object is not used by the code anymore, and give it to the
                 // GC even though the method dispose() is still running.
                 synchronized (providedPhantomRef) {
@@ -676,7 +689,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
                                 // but it is not elegent.
                                 logger.info("Disposing of shared object {} / {} ({}): the object is already disposed "
                                         + "by the ripper thread {}. Please ignore previous warning from the ripper "
-                                        + "thread about this shared object not being properly disposed of: that is "
+                                        + "thread about this shared object not being properly disposed of, that is "
                                         + "just a result of JVM runtime optimization", this.key, sharedObjectId,
                                         (direct ? "direct" : "ref"), providedPhantomRef.getDisposedByName());
                             }
@@ -704,6 +717,9 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
 
             // If this entry is not providing any shared objects, offer to the pool to dispose of this entry.
             // It is up to the pool to decide if and when this entry should be disposed of.
+            // Note that this is just a suggestion for the pool. We are not holding a lock anymore, so in the meantime
+            // this entry may provide another shared object. Before actually disposing of this entry, the pool will
+            // check the prerequisites under an exclusive lock.
             if (offerDisposeEntry) {
                 logger.trace("!!! Inside entry {}: offer dispose", this.key);
                 ConcurrentSharedObjectPool.this.offerDispose(this);
@@ -750,6 +766,8 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             // It is up to the pool to deside if the entry should actually be disposed of.
             // A pool implementation may decide to dispose of the entry immediately, or it may decide to keep
             // an entry active for a time, so that it is immediately available if required.
+            // Note that in the meantime this entry may provide another shared object, to before actually disposing
+            // of this entry the pool will check the prerequisites under an exclusive lock. 
             return (updatedSharedCount == 0);
         }
     }
@@ -764,17 +782,28 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         // The stack trace taken when the shared object has been allocated, to track abandoned shared objects.
         private final StackTrace stackTrace;
 
-        // A callback to be invoked to dispose of the shared object.
+        // A callback to be invoked to dispose of the shared object by the abandoned objects monitor.
+        // This callback is invoked when an abandoned objects monitor detects that the shared object has been GC'ed
+        // without being explicitly disposed of.
         private final Runnable disposeCallback;
 
-        // A key in the entry map pointing to this phantom reference.
+        // A key in the entry map pointing to this phantom reference, so that it may be removed after disposing
+        // of the object.
         private final Object phantomReferenceKey;
 
-        // The thread which disposed of the shared object held by this phantom reference, if any.
-        private Thread disposedBy;
+        // The name of the thread which disposed of the shared object held by this phantom reference, if any.
+        // We do not keep the thread object itself to prevent possible thread-related memory leaks, such as keeping
+        // unnecessary thread-local variables after the thread stopped.
+        // This variable is used to track double-dispose errors, when the same shared object is disposed of more than
+        // once.
+        // @GuardedBy synchronized(this)
+        private String disposedByName;
 
         // Was the shared object held by this phantom reference disposed directly, that is by calling it's dispose
         // method (true) or indirectly, that is by the ripper thread cleaning up phantom references (false).
+        // This variable is used to track double-dispose errors, when the same shared object is disposed of more than
+        // once.
+        // @GuardedBy synchronized(this)
         private boolean disposedDirect;
 
 
@@ -825,9 +854,9 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             // Clear this phantom reference.
             // If the shared object has been disposed of properly, we do not need to track when it is GC'ed anymore.
             // If the shared object has been GC'ed without being properly disposed of, and disposal was triggered
-            // by the reaper, there is nothing to track anymore (the shared object already has been GC'ed).
+            // by the reaper thread, there is nothing to track anymore (the shared object already has been GC'ed).
             this.clear();
-            this.disposedBy = Thread.currentThread();
+            this.disposedByName = Thread.currentThread().getName();
             this.disposedDirect = direct;
         }
 
@@ -835,14 +864,14 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         public boolean isDisposed() {
             assert (Thread.holdsLock(this));
 
-            return (this.disposedBy != null);
+            return (this.disposedByName != null);
         }
 
 
         public String getDisposedByName() {
             assert (Thread.holdsLock(this));
 
-            return (this.disposedBy == null ? null : this.disposedBy.getName());
+            return this.disposedByName;
         }
 
 

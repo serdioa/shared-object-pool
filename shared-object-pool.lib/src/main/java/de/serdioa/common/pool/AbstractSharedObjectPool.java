@@ -41,7 +41,7 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P> imp
             long idleDisposeTimeMillis,
             int disposeThreads) {
 
-        this.name = (name != null ? null : this.getClass().getSimpleName() + '-' + NAME_COUNTER.getAndIncrement());
+        this.name = (name != null ? name : this.getClass().getSimpleName() + '-' + NAME_COUNTER.getAndIncrement());
         this.pooledObjectFactory = Objects.requireNonNull(pooledObjectFactory);
         this.sharedObjectFactory = Objects.requireNonNull(sharedObjectFactory);
 

@@ -1,19 +1,12 @@
 #!/bin/bash
 
-# java -jar target/benchmarks.jar ConcurrentSharedObjectPoolBenchmark_01 -t 1 2>&1 | tee target/ConcurrentSharedObjectPoolBenchmark_01_1.log
-# java -jar target/benchmarks.jar ConcurrentSharedObjectPoolBenchmark_01 -t 2 2>&1 | tee target/ConcurrentSharedObjectPoolBenchmark_01_2.log
-# java -jar target/benchmarks.jar ConcurrentSharedObjectPoolBenchmark_01 -t 4 2>&1 | tee target/ConcurrentSharedObjectPoolBenchmark_01_4.log
+BENCHMARK=SharedCounterBenchmark
+MAX_THREADS=10
+for THREADS in $(echo 1; seq 2 2 $MAX_THREADS) ; do
+    echo "Running $BENCHMARK with $THREADS threads"
+    java -jar target/benchmarks.jar $BENCHMARK -f 1 -t $THREADS -w 5s -r 5s \
+        -o target/${BENCHMARK}_${THREADS}.txt \
+        -rff target/${BENCHMARK}_${THREADS}.csv 2>&1 \
+        | tee target/${BENCHMARK}_${THREADS}.log
+done
 
-#java -jar target/benchmarks.jar SharedCounterBenchmark -f 1 -t 1 2>&1 | tee target/SharedCounterBenchmark_1.log
-#java -jar target/benchmarks.jar SharedCounterBenchmark -f 1 -t 2 2>&1 | tee target/SharedCounterBenchmark_2.log
-#java -jar target/benchmarks.jar SharedCounterBenchmark -f 1 -t 4 2>&1 | tee target/SharedCounterBenchmark_4.log
-#java -jar target/benchmarks.jar SharedCounterBenchmark -f 1 -t 6 2>&1 | tee target/SharedCounterBenchmark_6.log
-#java -jar target/benchmarks.jar SharedCounterBenchmark -f 1 -t 8 2>&1 | tee target/SharedCounterBenchmark_8.log
-#java -jar target/benchmarks.jar SharedCounterBenchmark -f 1 -t 10 2>&1 | tee target/SharedCounterBenchmark_10.log
-
-#java -jar target/benchmarks.jar SharedObjectBenchmark -e Dynamic -f 1 -t 1 2>&1 | tee target/SharedObjectBenchmark_1.log
-#java -jar target/benchmarks.jar SharedObjectBenchmark -e Dynamic -f 1 -t 2 2>&1 | tee target/SharedObjectBenchmark_2.log
-#java -jar target/benchmarks.jar SharedObjectBenchmark -e Dynamic -f 1 -t 4 2>&1 | tee target/SharedObjectBenchmark_4.log
-#java -jar target/benchmarks.jar SharedObjectBenchmark -e Dynamic -f 1 -t 6 2>&1 | tee target/SharedObjectBenchmark_6.log
-#java -jar target/benchmarks.jar SharedObjectBenchmark -e Dynamic -f 1 -t 8 2>&1 | tee target/SharedObjectBenchmark_8.log
-#java -jar target/benchmarks.jar SharedObjectBenchmark -e Dynamic -f 1 -t 10 2>&1 | tee target/SharedObjectBenchmark_10.log

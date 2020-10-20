@@ -280,7 +280,7 @@ public class SharedObjectBenchmark {
     public static class MixedState extends AbstractState {
 
         // The test pooled object shared by all threads.
-        // During the initialization, access to the pooled object is guarded by the pooledObjectLock.
+        // During the initialization, access to the pooled object is guarded by the pooledLock.
         private static PooledTestObject pooled;
         private static final Object pooledLock = new Object();
 

@@ -3,11 +3,11 @@ package de.serdioa.common.pool.jmh;
 import java.util.concurrent.TimeUnit;
 
 import de.serdioa.common.pool.LockingSharedObject;
-import de.serdioa.common.pool.SharedObject;
 import de.serdioa.common.pool.SynchronizedSharedObject;
 import de.serdioa.common.pool.sample.Counter;
 import de.serdioa.common.pool.sample.LockingSharedCounter;
 import de.serdioa.common.pool.sample.PooledCounter;
+import de.serdioa.common.pool.sample.SharedCounter;
 import de.serdioa.common.pool.sample.SynchronizedSharedCounter;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -22,7 +22,6 @@ import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
-import org.openjdk.jmh.runner.options.TimeValue;
 
 
 /**
@@ -33,109 +32,182 @@ import org.openjdk.jmh.runner.options.TimeValue;
 @State(Scope.Benchmark)
 public class SharedCounterBenchmark {
 
-    public static interface SharedCounter extends Counter, SharedObject {
-    }
-
-
+    // Abstract base class for the test state.
     public static abstract class AbstractState {
 
         @Param({"pooled", "locking", "sync", "reflection-locking", "reflection-sync"})
         public String type;
 
-        public PooledCounter pooledCounter;
-        public Counter counter;
 
-
-        @Setup
-        public void setup() {
-            this.pooledCounter = new PooledCounter("AAA");
-            this.pooledCounter.initialize();
-
+        protected Counter buildSharedCounter(PooledCounter pooledCounter) {
             switch (this.type) {
                 case "pooled":
-                    this.counter = this.pooledCounter;
-                    break;
-                case "locking":
-                    this.counter = new LockingSharedCounter(this.pooledCounter, () -> {
-                    });
-                    break;
+                    return pooledCounter;
                 case "sync":
-                    this.counter = new SynchronizedSharedCounter(this.pooledCounter, () -> {
+                    return new SynchronizedSharedCounter(pooledCounter, () -> {
                     });
-                    break;
-                case "reflection-locking":
-                    this.counter = LockingSharedObject.factory(SharedCounter.class).createShared(
-                            this.pooledCounter, () -> {
-                            });
-                    break;
                 case "reflection-sync":
-                    this.counter = SynchronizedSharedObject.factory(SharedCounter.class).createShared(
-                            this.pooledCounter, () -> {
-                            });
-                    break;
+                    return SynchronizedSharedObject.factory(SharedCounter.class).createShared(pooledCounter, () -> {
+                    });
+                case "locking":
+                    return new LockingSharedCounter(pooledCounter, () -> {
+                    });
+                case "reflection-locking":
+                    return LockingSharedObject.factory(SharedCounter.class).createShared(pooledCounter, () -> {
+                    });
                 default:
                     throw new IllegalArgumentException("Unexpected type of the shared counter: " + this.type);
             }
         }
 
 
-        @TearDown
-        public void tearDown() {
-            // this.counter and this.counter may be the same object, or they may be different objects.
-            // We shall separately dispose of this.counter only if it is a separate shared object.
-            if (this.counter instanceof SharedObject) {
-                SharedObject sharedCounter = (SharedObject) this.counter;
-                sharedCounter.dispose();
+        public void disposeSharedCounter(Counter sharedCounter) {
+            if (sharedCounter instanceof SharedCounter) {
+                ((SharedCounter) sharedCounter).dispose();
             }
-            this.counter = null;
-
-            this.pooledCounter.dispose();
-            this.pooledCounter = null;
         }
     }
 
 
+    // Test state where both pooled and shared object are shared by all threads.
     @State(Scope.Benchmark)
     public static class SharedState extends AbstractState {
+
+        private PooledCounter pooled;
+        private Counter shared;
+
+
+        @Setup
+        public void setup() {
+            this.pooled = new PooledCounter("AAA");
+            this.pooled.initialize();
+
+            this.shared = buildSharedCounter(this.pooled);
+        }
+
+
+        @TearDown
+        public void tearDown() {
+            this.disposeSharedCounter(this.shared);
+            this.shared = null;
+
+            this.pooled.dispose();
+            this.pooled = null;
+        }
     }
 
 
+    // Test state where both pooled and shared object are specific to each thread.
     @State(Scope.Thread)
     public static class ThreadState extends AbstractState {
+
+        private PooledCounter pooled;
+        private Counter shared;
+
+
+        @Setup
+        public void setup() {
+            this.pooled = new PooledCounter("AAA");
+            this.pooled.initialize();
+
+            this.shared = buildSharedCounter(this.pooled);
+        }
+
+
+        @TearDown
+        public void tearDown() {
+            this.disposeSharedCounter(this.shared);
+            this.shared = null;
+
+            this.pooled.dispose();
+            this.pooled = null;
+        }
     }
 
 
-    @Benchmark
-    public int getThread(ThreadState state) {
-        return state.counter.get();
-    }
+    // Test state where pooled object is shared between threads, but shared object is specific to each thread.
+    @State(Scope.Thread)
+    public static class MixedState extends AbstractState {
+
+        // The test pooled counter shared by all threads.
+        // During the initialization, access to the pooled counter is guarded by the pooledLock.
+        private static PooledCounter pooled;
+        private static final Object pooledLock = new Object();
+
+        private Counter shared;
 
 
-    @Benchmark
-    public int incrementThread(ThreadState state) {
-        return state.counter.increment();
+        @Setup
+        public void setup() {
+            PooledCounter pooledSnapshot;
+            synchronized (MixedState.pooledLock) {
+                // The first thread in the synchronization block initializes the pooled counter.
+                if (MixedState.pooled == null) {
+                    MixedState.pooled = new PooledCounter("AAA");
+                    MixedState.pooled.initialize();
+                }
+                pooledSnapshot = MixedState.pooled;
+            }
+
+            this.shared = buildSharedCounter(this.pooled);
+        }
+
+
+        @TearDown
+        public void tearDown() {
+            this.disposeSharedCounter(this.shared);
+            this.shared = null;
+
+            synchronized (this.pooledLock) {
+                // The first thread in the synchronization block disposes of the pooled counter.
+                if (MixedState.pooled == null) {
+                    MixedState.pooled.dispose();
+                    MixedState.pooled = null;
+                }
+            }
+        }
     }
 
 
     @Benchmark
     public int getShared(SharedState state) {
-        return state.counter.get();
+        return state.pooled.get();
     }
 
 
     @Benchmark
     public int incrementShared(SharedState state) {
-        return state.counter.increment();
+        return state.pooled.increment();
+    }
+
+
+    @Benchmark
+    public int getThread(ThreadState state) {
+        return state.pooled.get();
+    }
+
+
+    @Benchmark
+    public int incrementThread(ThreadState state) {
+        return state.pooled.increment();
+    }
+
+
+    @Benchmark
+    public int getMixed(MixedState state) {
+        return state.pooled.get();
+    }
+
+
+    @Benchmark
+    public int incrementMixed(MixedState state) {
+        return state.pooled.increment();
     }
 
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
                 .include(SharedCounterBenchmark.class.getSimpleName())
-                .warmupIterations(5)
-                .warmupTime(TimeValue.seconds(5))
-                .measurementIterations(10)
-                .measurementTime(TimeValue.seconds(5))
                 .forks(1)
                 .syncIterations(true)
                 .build();

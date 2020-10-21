@@ -1,10 +1,6 @@
 package de.serdioa.common.pool.jmh;
 
-import java.util.Objects;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import de.serdioa.common.pool.LockingSharedObject;
 import de.serdioa.common.pool.SharedObject;
@@ -18,7 +14,6 @@ import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
-import org.openjdk.jmh.infra.Blackhole;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -56,138 +51,6 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class SharedObjectBenchmark {
-
-    // A test pooled object. The method run() just consumes CPU.
-    public interface TestObject {
-
-        void run(int tokens);
-    }
-
-
-    // A trivial implementation of the TestObject which uses JMH Blackhole to consume CPU.
-    public static class PooledTestObject implements TestObject {
-
-        @Override
-        public void run(int tokens) {
-            Blackhole.consumeCPU(tokens);
-        }
-    }
-
-
-    // A shared wrapper for the test object.
-    public interface SharedTestObject extends TestObject, SharedObject {
-    }
-
-
-    // A hand-crafted implementation of shared object usign synchronization.
-    public static class SynchronizedSharedTestObject implements SharedTestObject {
-
-        private final TestObject pooled;
-
-        // @GuardedBy(mutex)
-        private boolean disposed = false;
-
-        private final Object mutex = new Object();
-
-
-        public SynchronizedSharedTestObject(TestObject pooled) {
-            this.pooled = Objects.requireNonNull(pooled);
-        }
-
-
-        @Override
-        public void run(int tokens) {
-            synchronized (this.mutex) {
-                if (this.disposed) {
-                    throw new IllegalStateException("Shared object is already disposed of");
-                } else {
-                    this.pooled.run(tokens);
-                }
-            }
-        }
-
-
-        @Override
-        public void dispose() {
-            synchronized (this.mutex) {
-                if (this.disposed) {
-                    throw new IllegalStateException("Shared object is already disposed of");
-                } else {
-                    this.disposed = true;
-                }
-            }
-        }
-
-
-        @Override
-        public boolean isDisposed() {
-            synchronized (this.mutex) {
-                return this.disposed;
-            }
-        }
-    }
-
-
-    // A hand-crafted implementation of shared object usign locks.
-    public static class LockingSharedTestObject implements SharedTestObject {
-
-        private final TestObject pooled;
-
-        // @GuardedBy(lock)
-        private boolean disposed = false;
-
-        private final ReadWriteLock lock = new ReentrantReadWriteLock();
-
-
-        public LockingSharedTestObject(TestObject pooled) {
-            this.pooled = Objects.requireNonNull(pooled);
-        }
-
-
-        @Override
-        public void run(int tokens) {
-            final Lock sharedLock = this.lock.readLock();
-            sharedLock.lock();
-            try {
-                if (this.disposed) {
-                    throw new IllegalStateException("Shared object is already disposed of");
-                } else {
-                    this.pooled.run(tokens);
-                }
-            } finally {
-                sharedLock.unlock();
-            }
-        }
-
-
-        @Override
-        public void dispose() {
-            final Lock exclusiveLock = this.lock.writeLock();
-            exclusiveLock.lock();
-            try {
-                if (this.disposed) {
-                    throw new IllegalStateException("Shared object is already disposed of");
-                } else {
-                    this.disposed = true;
-                }
-            } finally {
-                exclusiveLock.unlock();
-            }
-        }
-
-
-        @Override
-        public boolean isDisposed() {
-            final Lock sharedLock = this.lock.readLock();
-            sharedLock.lock();
-            try {
-                return this.disposed;
-            } finally {
-                sharedLock.unlock();
-            }
-        }
-    }
-
 
     // Abstract base class for the test state.
     public static abstract class AbstractState {

@@ -1,7 +1,7 @@
 #!/bin/bash
 
-BENCHMARK=SharedCounterBenchmark
-MAX_THREADS=10
+BENCHMARK=SharedObjectBenchmark
+MAX_THREADS=8
 for THREADS in $(echo 1; seq 2 2 $MAX_THREADS) ; do
     echo "Running $BENCHMARK with $THREADS threads"
     java -jar target/benchmarks.jar $BENCHMARK -f 1 -t $THREADS -w 5s -r 5s \
@@ -9,4 +9,3 @@ for THREADS in $(echo 1; seq 2 2 $MAX_THREADS) ; do
         -rff target/${BENCHMARK}_${THREADS}.csv 2>&1 \
         | tee target/${BENCHMARK}_${THREADS}.log
 done
-

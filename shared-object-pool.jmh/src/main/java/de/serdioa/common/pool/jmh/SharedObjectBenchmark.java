@@ -58,7 +58,7 @@ public class SharedObjectBenchmark {
         @Param({"pooled", "locking", "sync", "reflection-locking", "reflection-sync"})
         public String type;
 
-        @Param({"0", "100", "10000"})
+        @Param({"0", "10", "100", "1000"})
         public int tokens;
 
 

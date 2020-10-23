@@ -58,9 +58,8 @@ public class SharedObjectBenchmark {
         @Param({"pooled", "locking", "sync", "reflection-locking", "reflection-sync"})
         public String type;
 
-        @Param({"0", "10", "100", "1000"})
+        @Param({"0", "10", "100", "200", "300", "400", "500", "600", "700", "800", "900", "1000"})
         public int tokens;
-
 
         protected TestObject buildSharedObject(PooledTestObject pooledObject) {
             switch (this.type) {

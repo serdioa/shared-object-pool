@@ -1,0 +1,370 @@
+---
+title: "SharedObjectPool"
+author: "Alexey Serdyuk"
+date: "22/10/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# JMH Performance Test for SharedObject
+
+```{r message=FALSE, echo=FALSE}
+#
+# Load required libraries
+#
+
+library(tidyverse) # Efficient data tables.
+library(ggplot2) # For drawing charts.
+library(grid) # For arranging charts in a grid.
+library(kableExtra) # Formatting tables.
+```
+
+```{r message=FALSE, echo=FALSE}
+# Load benchmark data from the specified file.
+readBenchmark <- function(filename) {
+    benchmark <- read_csv(filename, skip = 1,
+             col_names = c(
+                 'Benchmark', 'Mode', 'Threads', 'Samples', 'Score',
+                 'ScoreError', 'Unit', 'Tokens', 'Type'),
+             col_types = 'cciiddcic')
+    benchmark$Benchmark <- sub('.*test', '', benchmark$Benchmark)
+    benchmark$Benchmark <- factor(benchmark$Benchmark, c('Thread', 'Shared',
+                                                         'Mixed'))
+    benchmark$Type <- factor(benchmark$Type, c('pooled', 'sync',
+                                               'reflection-sync', 'locking',
+                                               'reflection-locking'))
+    benchmark
+}
+
+# Load benchmark data from all files, collect them in one data table.
+benchmark <- bind_rows(
+    readBenchmark('SharedObjectBenchmark_1.csv'),
+    readBenchmark('SharedObjectBenchmark_2.csv'),
+    readBenchmark('SharedObjectBenchmark_4.csv'),
+    readBenchmark('SharedObjectBenchmark_6.csv'),
+    readBenchmark('SharedObjectBenchmark_8.csv'),
+)
+```
+
+This document analyzes results of JMH performance tests for different
+implementations of the interface `SharedObject` to estimate their overhead.
+
+## Introduction to the library `shared-object-pool`
+
+The library `shared-object-pool` implements a pool of objects which may be
+pre-created or created on demand, each object may be used by multiple clients.
+A typical example of a pooled object is a "ticking" price feed for a particular
+currency, connected over network to a remote live data source. Such objects
+have the following characteristics:
+
+* An object could be relatively expensive to construct.
+
+* An object could be relatively resource-hungry, that is it may consume CPU,
+memory or network resources as long as it is "alive".
+
+* The same object is often required in different parts of the application.
+
+Due to the characteristics, it makes sense to keep such objects in a pool.
+When some part of an application requires a particular object, for example
+a price feed for a particular currency, it obtains the object from the pool.
+Different parts of the application access the same implementation object managed
+by the pool, reducing overall resource consumption.
+
+Using an object pool for expensive objects opens way for various optimizations.
+If the implementation object is easy to construct but expensive to keep "alive",
+the pool may be configured to immediately dispose of the implementation object
+as soon as no client is using it. On the other hand, if the implementation
+object is expensive to construct but relatively cheap to keep "alive", the pool
+may be configured to keep unused objects for some time, so that the object will
+be immediately available when a client asks for it.
+
+Actively managing objects in the pool instead of just caching them requires
+to keep track of whether clients are using any particular pooled object.
+We decided to use an explicit lifecycle management: the client explicitly
+requests the pool to provide a particular object, and the client explicitly
+informs the pool that it does not require the object anymore. The pool may
+implement additional "safety net" to catch cases when a client forgot to dispose
+of an object it does not require anymore, but that is just a "safety net", not
+the normal approach.
+
+Using an explicit lifecycle management is facilitated by using wrappers for
+pooled objects. Whenever a client requests an object from the pool, the pool
+provides a wrapper for the implementation object. Using wrappers instead of
+pooled implementation objects allows to improve control on how objects are used.
+In particular, when a client disposes of a wrapper, any subsequent method calls
+on the wrapper throws exceptions, allowing to immediately spot programming
+errors.
+
+Object wrappers come with a cost: calling a method of the implementation object
+through the wrapper is slower than calling the implementation object directly.
+The purpose of this document is to 
+
+The interface `SharedObject` provides a wrapper for implementation objects
+managed by a pool. Whenever a client requires a pooled object, it requests
+the object from the pool, and the pool returns a wrapper. When the client does
+not require the object anymore, it disposes of the object. The pool keeps track
+whether there are active wrappers for each pooled implementation object, and may
+dispose a pooled implementation object once there are no active wrappers
+referencing it.
+
+The purpose of this document is to compare performance of several
+implementations of the wrapper interface `SharedObject`.
+
+## Description of tests
+
+We have run JMH performance tests using an artificial implementation object
+which just consumes a requested number of CPU tokens using the JMH framework.
+A CPU token defines an abstract amount of time, but the required time grows
+linearly with a number of CPU tokens. A method call that consumes 10 CPU tokens
+runs 100 times faster as a method call that consumes 1000 CPU tokens, if no
+other application logic is involved. To test an overhead of wrapper objects
+for method calls of different complexity, we have run tests with method calls
+which consume 0, 10, 100, 200, 300, ..., 1000 CPU tokens.
+
+The following implementations of the interface `SharedObject` were tested:
+
+* Baseline uses an implementation object directly, without any wrappers.
+Comparing each implementation of the `SharedObject` interface with the baseline
+allows to estimate the overhead of a particular wrapper.
+
+* "sync" is a hand-crafted wrapper using standard Java synchronization.
+
+* "reflection-sync" is a reflection-based implementation using standard Java
+synchronization. Using reflection may be slower as the hand-crafted version, but
+it allows to use the same implementation for all object types, whereas the
+hand-crafted implementation involves additional work for each object type,
+and introduces more risks due to a possible programmer's error.
+
+* "locking" is a hand-crafted implementation using `ReadWriteLock`. Compared
+to the "sync" implementation, the "locking" implementation allows a higher
+level of parallelism when a wrapper object is used by multiple threads.
+
+* "reflection-locking" is a reflection-based implementation using
+`ReadWriteLock`. The comparison between "locking" vs. "reflection-locking"
+is the same as between "sync" and "reflection-sync": the reflection-based
+implementation may be slower, but the hand-crafted requires more efforts to
+implement and maintain.
+
+## Analysis of test results
+
+This section analyzes the test results we consider the most important.
+Raw data is available for extended analysis.
+
+### Overhead of wrappers
+
+To estimate an overhead of wrappers vs. the implementation object, we compare
+test results in a single-thread mode. In this mode concurrency plays no role,
+so any observed slowdown is due to the wrapper implementation, not due to
+several threads fighting for resources.
+
+The following chart shows duration (nanoseconds) each wrapper implementation
+takes to execute a method call which consumed the specified number of CPU
+time tokens.
+
+```{r message=FALSE, echo=FALSE, fig.width=10, fig.height=4}
+ggplot(data = benchmark %>% filter(Threads == 1 & Benchmark == 'Thread'),
+       aes(x = Tokens, y = Score, group = Type,
+           color = Type)) +
+    geom_line() +
+    scale_color_manual(values = c('#FF0000', '#00BB00', '#008800', '#0000FF', '#0000BB')) +
+    labs(x = 'CPU Time Tokens') +
+    labs(y = 'Duration, ns')
+```
+
+On the chart we immediately see:
+
+* The duration of method calls scale linearly with the number of CPU time tokens
+(as promised by the JMH framework).
+* The difference between implementation is very small, that is an overhead of
+all wrapper implementations is very low.
+
+The following table provides duration in ns of method calls for all
+implementations, and compares them with the baseline "pooled" implementation
+(that is, without any wrapper). The column "Duration" shows duration
+of a method call in ns, the column "Diff" shows a difference in ns between
+a particular wrapper and the no-wrapper baseline.
+
+```{r message=FALSE, echo=FALSE}
+# Extract only required data, re-format as a wide table (implementation types
+# in columns).
+stat.data <- benchmark %>%
+    filter(Threads == 1 & Benchmark == 'Thread') %>%
+    select(Tokens, Type, Score) %>%
+    pivot_wider(names_from = Type, values_from = Score) %>%
+    rename(ref.locking = 'reflection-locking', ref.sync = 'reflection-sync')
+
+# Add columns with percentage compared to the pooled implementation.
+stat.overhead <- stat.data %>%
+    mutate(sync.pct = sprintf("%.1f", sync - pooled)) %>%
+    mutate(ref.sync.pct = sprintf("%.1f", ref.sync - pooled)) %>%
+    mutate(locking.pct = sprintf("%.1f", locking - pooled)) %>%
+    mutate(ref.locking.pct = sprintf("%.1f", ref.locking - pooled)) %>%
+    mutate(pooled = sprintf("%.1f", pooled)) %>%
+    mutate(sync = sprintf("%.1f", sync)) %>%
+    mutate(ref.sync = sprintf("%.1f", ref.sync)) %>%
+    mutate(locking = sprintf("%.1f", locking)) %>%
+    mutate(ref.locking = sprintf("%.1f", ref.locking)) %>%
+    relocate(Tokens, pooled,
+             sync, sync.pct,
+             ref.sync, ref.sync.pct,
+             locking, locking.pct,
+             ref.locking, ref.locking.pct)
+kable(
+    stat.overhead,
+    booktabs = TRUE,
+    col.names = c('Tokens', 'Duration', 'Duration', 'Diff', 'Duration', 'Diff', 'Duration', 'Diff', 'Duration', 'Diff'),
+    align = c("l", rep("r", times = 9))
+) %>%
+    add_header_above(
+        header = c(
+            "",
+            "pool",
+            "sync" = 2,
+            "reflection-sync" = 2,
+            "locking" = 2,
+            "reflection-locking" = 2
+        )
+    ) %>%
+    kable_styling(
+        bootstrap_options = c("striped", "bordered", "hover"),
+        full_width = FALSE
+    )
+```
+
+The overhead of each particular wrapper is the same for most durations of
+the implementation method call (that is, the number of CPU time tokens), except
+the shortest calls. According to the table, the average overhead in ns is:
+
+* "sync": `r sprintf("%.1f", mean(stat.data$sync - stat.data$pooled))`
+* "reflection-sync": `r sprintf("%.1f", mean(stat.data$ref.sync - stat.data$pooled))`
+* "locking": `r sprintf("%.1f", mean(stat.data$locking - stat.data$pooled))`
+* "reflection-locking": `r sprintf("%.1f", mean(stat.data$ref.locking - stat.data$pooled))`
+
+Synchronized implementations have a lower overhead as implementations
+based on `ReadWriteLock` (but synchronized implementations do not scale
+well with the number of threads, as we will see below). Reflection-based
+implementations are slower, as expected, but not much so: a difference of 5-6
+ns is negligible for most the real-world scenarios where it makes sense to
+pool objects.
+
+### Scalability of wrappers
+
+In this section we compare wrappers when they are used by multiple threads.
+Note that this test is about the case when a particular wrapper is used
+by multiple threads, it assumes that the underlying implementation object
+is perfectly concurrent and does not add any multi-threaded penalty at all.
+In most real-life scenarios the underlying implementation would add additional
+multi-threaded penalty, and the wrapper overhead will constitute smaller part
+of the total overhead.
+
+The following chart shows duration (nanoseconds) each wrapper implementation
+takes to execute a method call which consumed the specified number of CPU
+time tokens, when running with 4 threads (the number of CPU cores available
+when running the test).
+
+```{r message=FALSE, echo=FALSE, fig.width=10, fig.height=4}
+ggplot(data = benchmark %>% filter(Benchmark == 'Shared' & Threads == 4),
+       aes(x = Tokens, y = Score, group = Type, Threads,
+           color = Type)) +
+    geom_line() +
+    scale_color_manual(values = c('#FF0000', '#00BB00', '#008800', '#0000FF', '#0000BB')) +
+    labs(x = 'CPU Time Tokens') +
+    labs(y = 'Duration, ns')
+```
+
+* For the baseline implementation ("pooled", red line) there is no
+multi-threaded penalty: as long as the number of available CPU cores is enough
+to run all test threads, the threads do not compete for resources in this test
+scenario.
+
+* Synchronization-based wrappers (green lines) scale pretty badly and show very
+high volatility, that is different test runs vary greatly. This is not a
+surprise: the synchronized wrapper can be used only by one thread at each give
+time, so when running with 4 concurrent threads, each method call in average
+waits for method calls from 3 other threads, that is each method call is in
+average 4 times slower as without the wrapper.
+
+```{r message=FALSE, echo=FALSE}
+# Overhead: 
+# sprintf("%0.f", mean(filter(benchmark, Benchmark == 'Shared' & Threads == 4 & Type == 'locking' & Tokens < 300)$Score))`
+```
+
+* Wrappers based on `ReadWriteLock` have a nearly-constant overhead of 550 ns
+when running a method which consumes less than 300 CPU tokens. For
+longer-running methods, these wrappers scale very similar to the baseline,
+adding just a near-constant overhead (100 - 150 ns).
+
+```{r message=FALSE, echo=FALSE}
+# Extract only required data, re-format as a wide table (implementation types
+# in columns).
+stat.data <- benchmark %>%
+    filter(Threads == 4 & Benchmark == 'Shared') %>%
+    select(Tokens, Type, Score) %>%
+    pivot_wider(names_from = Type, values_from = Score) %>%
+    rename(ref.locking = 'reflection-locking', ref.sync = 'reflection-sync')
+
+# Add columns with percentage compared to the pooled implementation.
+stat.overhead <- stat.data %>%
+    mutate(sync.pct = sprintf("%.1f", sync - pooled)) %>%
+    mutate(ref.sync.pct = sprintf("%.1f", ref.sync - pooled)) %>%
+    mutate(locking.pct = sprintf("%.1f", locking - pooled)) %>%
+    mutate(ref.locking.pct = sprintf("%.1f", ref.locking - pooled)) %>%
+    mutate(pooled = sprintf("%.1f", pooled)) %>%
+    mutate(sync = sprintf("%.1f", sync)) %>%
+    mutate(ref.sync = sprintf("%.1f", ref.sync)) %>%
+    mutate(locking = sprintf("%.1f", locking)) %>%
+    mutate(ref.locking = sprintf("%.1f", ref.locking)) %>%
+    relocate(Tokens, pooled,
+             sync, sync.pct,
+             ref.sync, ref.sync.pct,
+             locking, locking.pct,
+             ref.locking, ref.locking.pct)
+kable(
+    stat.overhead,
+    booktabs = TRUE,
+    col.names = c('Tokens', 'Duration', 'Duration', 'Diff', 'Duration', 'Diff', 'Duration', 'Diff', 'Duration', 'Diff'),
+    align = c("l", rep("r", times = 9))
+) %>%
+    add_header_above(
+        header = c(
+            "",
+            "pool",
+            "sync" = 2,
+            "reflection-sync" = 2,
+            "locking" = 2,
+            "reflection-locking" = 2
+        )
+    ) %>%
+    kable_styling(
+        bootstrap_options = c("striped", "bordered", "hover"),
+        full_width = FALSE
+    )
+```
+
+## Conclusion
+
+Based on the performed tests, we conclude:
+
+* Hand-crafted wrappers are faster than reflection-based wrappers, but the
+difference is very small (about 5 nanoseconds per method call).
+Except of cases when methods of pooled objects are repeatedly called in a tight
+loop, the efforts to provide and maintain a hand-crafted implementation are not
+worth the effort.
+
+* Implementation based on synchronization is slightly faster than implementation
+based on `ReadWriteLock`, when a wrapper is used by a single thread. On the
+other hand, when a wrapper could be used by multiple threads, the
+synchronization-based implementation does not scale at all, whereas the
+implementation based on `ReadWriteLock` scales perfectly. A gain in case of
+a single-threaded usage is just about 2 nanoseconds per method call. Even if
+the wrapper is intended to be used in a single-threaded context, in most cases
+it is not worth the risk of very large performance penalty if the wrapper is
+accessed from multiple threads.
+
+* As a result, we recommend using the "reflection-locking" implementation
+(that is, the implementation based on reflection and `ReadWriteLock`), unless
+performance tests in a particular context shows that another implementation
+is required to fulfill the requirements.

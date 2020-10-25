@@ -1,0 +1,46 @@
+---
+title: "SharedObjectPoolBaseline"
+author: "Alexey Serdyuk"
+date: "24/10/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# JMH Baseline Performance Test for SharedObjectPool
+
+```{r message=FALSE, echo=FALSE}
+#
+# Load required libraries
+#
+
+library(tidyverse) # Efficient data tables.
+library(ggplot2) # For drawing charts.
+library(grid) # For arranging charts in a grid.
+library(kableExtra) # Formatting tables.
+```
+
+```{r message=FALSE, echo=FALSE}
+# Load benchmark data from the specified file.
+readBenchmark <- function(filename) {
+    benchmark <- read_csv(filename, skip = 1,
+             col_names = c(
+                 'Benchmark', 'Mode', 'Threads', 'Samples', 'Score',
+                 'ScoreError', 'Unit', 'PooledObjects', 'Tokens'),
+             col_types = 'cciiddcii')
+    benchmark$Benchmark <- sub('.*\\.', '', benchmark$Benchmark)
+    benchmark
+}
+
+# Load benchmark data from all files, collect them in one data table.
+benchmark <- bind_rows(
+    readBenchmark('SharedObjectPoolBaselineBenchmark_1.csv'),
+    readBenchmark('SharedObjectPoolBaselineBenchmark_2.csv'),
+    readBenchmark('SharedObjectPoolBaselineBenchmark_4.csv'),
+    readBenchmark('SharedObjectPoolBaselineBenchmark_6.csv')
+)
+```
+
+

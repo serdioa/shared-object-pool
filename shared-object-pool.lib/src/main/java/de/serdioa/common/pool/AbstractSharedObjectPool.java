@@ -148,7 +148,7 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P> imp
         protected int disposeThreads;
 
         // Provide stack trace for tracking allocation of abandoned shared objects.
-        protected StackTraceProvider stackTraceProvider = new ThrowableStackTraceProvider();
+        protected StackTraceProvider stackTraceProvider = new NoOpStackTraceProvider();
 
 
         public SELF setName(String name) {

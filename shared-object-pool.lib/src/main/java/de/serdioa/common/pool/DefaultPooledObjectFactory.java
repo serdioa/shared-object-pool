@@ -40,8 +40,8 @@ public class DefaultPooledObjectFactory<K, P> implements PooledObjectFactory<K, 
     public static class Builder<K, P> {
 
         private PooledObjectCreator<K, P> creator;
-        private Consumer<P> initializer;
-        private Consumer<P> disposer;
+        private Consumer<P> initializer = p -> {}; // Default no-op initializer.
+        private Consumer<P> disposer = p -> {}; // Default no-op disposer.
 
 
         public Builder<K, P> setCreator(PooledObjectCreator<K, P> creator) {

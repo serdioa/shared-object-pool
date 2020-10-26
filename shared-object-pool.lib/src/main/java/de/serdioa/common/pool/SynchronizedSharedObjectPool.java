@@ -108,7 +108,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
                         if (!initializeSuccess) {
                             endInitializeTimestamp = System.nanoTime();
                         }
-                        this.firePooledObjectCreated(endInitializeTimestamp - startInitializeTimestamp,
+                        this.firePooledObjectInitialized(endInitializeTimestamp - startInitializeTimestamp,
                                 initializeSuccess);
                     }
                 }

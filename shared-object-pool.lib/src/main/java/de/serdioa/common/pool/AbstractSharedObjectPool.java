@@ -9,7 +9,6 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,19 +42,6 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
     // The executor service for running disposals.
     private final ScheduledExecutorService disposeExecutor;
 
-    // Metric collectors.
-    // The number of times the method get() has returned a cached pooled object.
-    protected final AtomicLong hitCount = new AtomicLong();
-    // The number of times the method get() has returned a newly created pooled object.
-    protected final AtomicLong missCount = new AtomicLong();
-    // The number of times the method get() has successfully created a new pooled object.
-    protected final AtomicLong createSuccessCount = new AtomicLong();
-    // The number of times the method get() failed to create a new pooled object.
-    protected final AtomicLong createExceptionCount = new AtomicLong();
-    // The number of times pool successfully evicted unused objects.
-    protected final AtomicLong evictionSuccessCount = new AtomicLong();
-    // The number of times pool failed to properly dispose of an unused object before evicting it.
-    protected final AtomicLong evictionExceptionCount = new AtomicLong();
     // Statistics listeners.
     private final List<SharedObjectPoolStatsListener> statsListeners = new CopyOnWriteArrayList<>();
 
@@ -133,42 +119,6 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
 
 
     @Override
-    public long getHitCount() {
-        return this.hitCount.get();
-    }
-
-
-    @Override
-    public long getMissCount() {
-        return this.missCount.get();
-    }
-
-
-    @Override
-    public long getCreateSuccessCount() {
-        return this.createSuccessCount.get();
-    }
-
-
-    @Override
-    public long getCreateExceptionCount() {
-        return this.createExceptionCount.get();
-    }
-
-
-    @Override
-    public long getEvictionSuccessCount() {
-        return this.evictionSuccessCount.get();
-    }
-
-
-    @Override
-    public long getEvictionExceptionCount() {
-        return this.evictionExceptionCount.get();
-    }
-
-
-    @Override
     public void addSharedObjectPoolStatsListener(SharedObjectPoolStatsListener listener) {
         this.statsListeners.add(listener);
     }
@@ -180,10 +130,10 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
     }
 
 
-    protected void fireSharedObjectGet(long durationNanos) {
+    protected void fireSharedObjectGet(long durationNanos, boolean hit) {
         for (SharedObjectPoolStatsListener listener : this.statsListeners) {
             try {
-                listener.onSharedObjectGet(durationNanos);
+                listener.onSharedObjectGet(durationNanos, hit);
             } catch (Exception ex) {
                 this.logger.error("Exception when calling listener onSharedObjectGet()", ex);
             }
@@ -191,10 +141,10 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
     }
 
 
-    protected void firePooledObjectCreated(long durationNanos) {
+    protected void firePooledObjectCreated(long durationNanos, boolean success) {
         for (SharedObjectPoolStatsListener listener : this.statsListeners) {
             try {
-                listener.onPooledObjectCreated(durationNanos);
+                listener.onPooledObjectCreated(durationNanos, success);
             } catch (Exception ex) {
                 this.logger.error("Exception when calling listener onPooledObjectCreated()", ex);
             }
@@ -202,10 +152,10 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
     }
 
 
-    protected void firePooledObjectInitialized(long durationNanos) {
+    protected void firePooledObjectInitialized(long durationNanos, boolean success) {
         for (SharedObjectPoolStatsListener listener : this.statsListeners) {
             try {
-                listener.onPooledObjectInitialized(durationNanos);
+                listener.onPooledObjectInitialized(durationNanos, success);
             } catch (Exception ex) {
                 this.logger.error("Exception when calling listener onPooledObjectInitialized()", ex);
             }
@@ -213,10 +163,10 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
     }
 
 
-    protected void firePooledObjectDisposed(long durationNanos) {
+    protected void firePooledObjectDisposed(long durationNanos, boolean success) {
         for (SharedObjectPoolStatsListener listener : this.statsListeners) {
             try {
-                listener.onPooledObjectDisposed(durationNanos);
+                listener.onPooledObjectDisposed(durationNanos, success);
             } catch (Exception ex) {
                 this.logger.error("Exception when calling listener onPooledObjectDisposed()", ex);
             }

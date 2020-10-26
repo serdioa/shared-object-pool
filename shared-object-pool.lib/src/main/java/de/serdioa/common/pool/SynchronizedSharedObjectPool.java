@@ -221,9 +221,40 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
     }
 
 
+    @Override
     public int getPooledObjectsCount() {
         synchronized (this.lock) {
             return this.entries.size();
+        }
+    }
+
+
+    @Override
+    public int getUnusedPooledObjectsCount() {
+        synchronized (this.lock) {
+            int unusedPooledObjectsCount = 0;
+            for (Entry entry : this.entries.values()) {
+                if (entry.getSharedCount() > 0) {
+                    unusedPooledObjectsCount++;
+                }
+            }
+
+            return unusedPooledObjectsCount;
+        }
+    }
+
+
+    @Override
+    public int getSharedObjectsCount() {
+        synchronized (this.lock) {
+            int sharedObjectsCount = 0;
+            for (Entry entry : this.entries.values()) {
+                if (entry.getSharedCount() > 0) {
+                    sharedObjectsCount += Math.max(0, entry.getSharedCount());
+                }
+            }
+
+            return sharedObjectsCount;
         }
     }
 

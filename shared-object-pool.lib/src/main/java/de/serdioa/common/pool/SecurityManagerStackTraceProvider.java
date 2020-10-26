@@ -6,8 +6,8 @@ import java.security.PrivilegedAction;
 
 /**
  * An implementation of the {@link StackTraceProvider} which uses a {@link SecurityManager} to obtain the current call
- * stack. This implementation is faster than {@link ThrowableStackTrace}, but it provides only class names in the call
- * stack, method names are not available.
+ * stack. This implementation is faster than {@link ThrowableStackTraceProvider}, but it provides only class names in
+ * the call stack, method names are not available.
  */
 public class SecurityManagerStackTraceProvider implements StackTraceProvider {
 

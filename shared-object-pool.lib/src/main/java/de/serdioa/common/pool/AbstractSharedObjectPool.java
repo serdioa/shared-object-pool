@@ -1,15 +1,24 @@
 package de.serdioa.common.pool;
 
+import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
-public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P> implements SharedObjectPool<K, S> {
+public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
+        implements SharedObjectPool<K, S>, SharedObjectPoolStats {
+
+    private final Logger logger = LoggerFactory.getLogger(this.getClass());
 
     // A static counter used to create unique names for object pools.
     private static final AtomicInteger NAME_COUNTER = new AtomicInteger();
@@ -33,6 +42,22 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P> imp
 
     // The executor service for running disposals.
     private final ScheduledExecutorService disposeExecutor;
+
+    // Metric collectors.
+    // The number of times the method get() has returned a cached pooled object.
+    protected final AtomicLong hitCount = new AtomicLong();
+    // The number of times the method get() has returned a newly created pooled object.
+    protected final AtomicLong missCount = new AtomicLong();
+    // The number of times the method get() has successfully created a new pooled object.
+    protected final AtomicLong createSuccessCount = new AtomicLong();
+    // The number of times the method get() failed to create a new pooled object.
+    protected final AtomicLong createExceptionCount = new AtomicLong();
+    // The number of times pool successfully evicted unused objects.
+    protected final AtomicLong evictionSuccessCount = new AtomicLong();
+    // The number of times pool failed to properly dispose of an unused object before evicting it.
+    protected final AtomicLong evictionExceptionCount = new AtomicLong();
+    // Statistics listeners.
+    private final List<SharedObjectPoolStatsListener> statsListeners = new CopyOnWriteArrayList<>();
 
 
     protected AbstractSharedObjectPool(final String name,
@@ -104,6 +129,98 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P> imp
 
     protected ScheduledFuture<?> scheduleDisposeTask(Runnable command, long delay, TimeUnit unit) {
         return this.disposeExecutor.schedule(command, delay, unit);
+    }
+
+
+    @Override
+    public long getHitCount() {
+        return this.hitCount.get();
+    }
+
+
+    @Override
+    public long getMissCount() {
+        return this.missCount.get();
+    }
+
+
+    @Override
+    public long getCreateSuccessCount() {
+        return this.createSuccessCount.get();
+    }
+
+
+    @Override
+    public long getCreateExceptionCount() {
+        return this.createExceptionCount.get();
+    }
+
+
+    @Override
+    public long getEvictionSuccessCount() {
+        return this.evictionSuccessCount.get();
+    }
+
+
+    @Override
+    public long getEvictionExceptionCount() {
+        return this.evictionExceptionCount.get();
+    }
+
+
+    @Override
+    public void addSharedObjectPoolStatsListener(SharedObjectPoolStatsListener listener) {
+        this.statsListeners.add(listener);
+    }
+
+
+    @Override
+    public void removeSharedObjectPoolStatsListener(SharedObjectPoolStatsListener listener) {
+        this.statsListeners.remove(listener);
+    }
+
+
+    protected void fireSharedObjectGet(long durationNanos) {
+        for (SharedObjectPoolStatsListener listener : this.statsListeners) {
+            try {
+                listener.onSharedObjectGet(durationNanos);
+            } catch (Exception ex) {
+                this.logger.error("Exception when calling listener onSharedObjectGet()", ex);
+            }
+        }
+    }
+
+
+    protected void firePooledObjectCreated(long durationNanos) {
+        for (SharedObjectPoolStatsListener listener : this.statsListeners) {
+            try {
+                listener.onPooledObjectCreated(durationNanos);
+            } catch (Exception ex) {
+                this.logger.error("Exception when calling listener onPooledObjectCreated()", ex);
+            }
+        }
+    }
+
+
+    protected void firePooledObjectInitialized(long durationNanos) {
+        for (SharedObjectPoolStatsListener listener : this.statsListeners) {
+            try {
+                listener.onPooledObjectInitialized(durationNanos);
+            } catch (Exception ex) {
+                this.logger.error("Exception when calling listener onPooledObjectInitialized()", ex);
+            }
+        }
+    }
+
+
+    protected void firePooledObjectDisposed(long durationNanos) {
+        for (SharedObjectPoolStatsListener listener : this.statsListeners) {
+            try {
+                listener.onPooledObjectDisposed(durationNanos);
+            } catch (Exception ex) {
+                this.logger.error("Exception when calling listener onPooledObjectDisposed()", ex);
+            }
+        }
     }
 
 

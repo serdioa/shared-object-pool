@@ -19,7 +19,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * An implementation of an {@link SharedObjectPool} using concurrent map.
- * 
+ *
  * @param <K> the type of keys used to access shared objects provided by this pool.
  * @param <S> the type of shared objects provided by this pool.
  * @param <P> the type of implementation objects backing shared objects provided by this pool.
@@ -301,8 +301,33 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     }
 
 
+    @Override
     public int getPooledObjectsCount() {
         return this.entries.size();
+    }
+
+
+    @Override
+    public int getUnusedPooledObjectsCount() {
+        int unusedPooledObjectsCount = 0;
+        for (Entry entry : this.entries.values()) {
+            if (entry.getSharedCount() > 0) {
+                unusedPooledObjectsCount++;
+            }
+        }
+
+        return unusedPooledObjectsCount;
+    }
+
+
+    @Override
+    public int getSharedObjectsCount() {
+        int sharedObjectsCount = 0;
+        for (Entry entry : this.entries.values()) {
+            sharedObjectsCount += Math.max(0, entry.getSharedCount());
+        }
+
+        return sharedObjectsCount;
     }
 
 
@@ -722,7 +747,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             // A pool implementation may decide to dispose of the entry immediately, or it may decide to keep
             // an entry active for a time, so that it is immediately available if required.
             // Note that in the meantime this entry may provide another shared object, to before actually disposing
-            // of this entry the pool will check the prerequisites under an exclusive lock. 
+            // of this entry the pool will check the prerequisites under an exclusive lock.
             return (updatedSharedCount == 0);
         }
     }

@@ -254,11 +254,50 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
     }
 
 
+    @Override
     public int getPooledObjectsCount() {
         Lock poolReadLock = this.lock.readLock();
         poolReadLock.lock();
         try {
             return this.entries.size();
+        } finally {
+            poolReadLock.unlock();
+        }
+    }
+
+
+    @Override
+    public int getUnusedPooledObjectsCount() {
+        Lock poolReadLock = this.lock.readLock();
+        poolReadLock.lock();
+        try {
+            int unusedPooledObjectsCount = 0;
+            for (Entry entry : this.entries.values()) {
+                if (entry.getSharedCount() > 0) {
+                    unusedPooledObjectsCount++;
+                }
+            }
+
+            return unusedPooledObjectsCount;
+        } finally {
+            poolReadLock.unlock();
+        }
+    }
+
+
+    @Override
+    public int getSharedObjectsCount() {
+        Lock poolReadLock = this.lock.readLock();
+        poolReadLock.lock();
+        try {
+            int sharedObjectsCount = 0;
+            for (Entry entry : this.entries.values()) {
+                if (entry.getSharedCount() > 0) {
+                    sharedObjectsCount += Math.max(0, entry.getSharedCount());
+                }
+            }
+
+            return sharedObjectsCount;
         } finally {
             poolReadLock.unlock();
         }

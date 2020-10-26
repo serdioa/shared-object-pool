@@ -311,7 +311,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     public int getUnusedPooledObjectsCount() {
         int unusedPooledObjectsCount = 0;
         for (Entry entry : this.entries.values()) {
-            if (entry.getSharedCount() > 0) {
+            if (entry.getSharedCount() <= 0) {
                 unusedPooledObjectsCount++;
             }
         }

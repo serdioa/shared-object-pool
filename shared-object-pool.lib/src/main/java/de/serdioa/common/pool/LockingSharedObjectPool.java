@@ -410,7 +410,11 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
         // @GuardedBy(this.lock)
         private ScheduledFuture<?> disposeTask;
 
-        // Read/write lock.
+        // Lock for lifecycle management.
+        // Changing the lifecycle of this entry, that is executing init() and dispose(), requires exclusive ("write")
+        // lock. Other operations, such as creating or disposing of a shared object, requires shared ("read") lock.
+        // The locking policy ensures that no other operations may run when the entry's lifecycle stage is changed,
+        // but many non-lifecycle-related operations may run in parallel when the entry is active.
         private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
 
@@ -508,8 +512,8 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
 
 
         S createSharedObject() {
-            Lock entryExclusiveLock = this.exclusiveLock();
-            entryExclusiveLock.lock();
+            Lock entrySharedLock = this.sharedLock();
+            entrySharedLock.lock();
             try {
                 ensureActive();
 
@@ -529,7 +533,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
 
                 return sharedObject;
             } finally {
-                entryExclusiveLock.unlock();
+                entrySharedLock.unlock();
             }
         }
 
@@ -538,8 +542,8 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
             // Should we offer the pool to dispose of this entry after the synchronized block?
             boolean offerDisposeEntry = false;
 
-            Lock entryExclusiveLock = this.exclusiveLock();
-            entryExclusiveLock.lock();
+            Lock entrySharedLock = this.sharedLock();
+            entrySharedLock.lock();
             try {
                 ensureActive();
 
@@ -560,7 +564,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
                     this.lastReturnTime = System.currentTimeMillis();
                 }
             } finally {
-                entryExclusiveLock.unlock();
+                entrySharedLock.unlock();
             }
 
             if (offerDisposeEntry) {
@@ -579,8 +583,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
 
 
         private void ensureActive() {
-            assert (this.lock.isWriteLockedByCurrentThread());
-
             if (this.sharedCount == NEW) {
                 throw new IllegalStateException("Entry is not initialized yet");
             }

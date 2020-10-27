@@ -17,6 +17,7 @@ import de.serdioa.common.pool.NoOpStackTraceProvider;
 import de.serdioa.common.pool.PooledObjectFactory;
 import de.serdioa.common.pool.SharedObjectFactory;
 import de.serdioa.common.pool.SharedObjectPool;
+import de.serdioa.common.pool.SharedObjectPoolMetrics;
 import de.serdioa.common.pool.SharedObjectPoolStats;
 import de.serdioa.common.pool.SharedObjectPoolStatsListener;
 import de.serdioa.common.pool.SynchronizedSharedObjectPool;
@@ -91,14 +92,9 @@ public class SharedObjectPoolStatisticsBenchmark {
         private SimpleSharedObjectPoolStatsListener statListener;
 
         /**
-         * The performance statistics listener based on Micrometer.
+         * The performance statistics metrics based on Micrometer.
          */
-        private MicrometerSharedObjectPoolStatsListener micrometerListener;
-
-        /**
-         * The performance statistics provider based on Micrometer.
-         */
-        private MicrometerSharedObjectPoolStatsProvider micrometerProvider;
+        private SharedObjectPoolMetrics metrics;
 
         /**
          * The micrometer registry.
@@ -170,16 +166,8 @@ public class SharedObjectPoolStatisticsBenchmark {
                 this.statListener = new SimpleSharedObjectPoolStatsListener();
                 ((SharedObjectPoolStats) this.pool).addSharedObjectPoolStatsListener(this.statListener);
             } else if ("micrometer".equals(this.statListenerType)) {
-                this.micrometerListener = new MicrometerSharedObjectPoolStatsListener();
-                ((SharedObjectPoolStats) this.pool)
-                        .addSharedObjectPoolStatsListener(this.micrometerListener);
-
-                this.micrometerProvider = new MicrometerSharedObjectPoolStatsProvider(
-                        (SharedObjectPoolStats) this.pool);
-
                 this.registry = new SimpleMeterRegistry();
-                this.micrometerListener.bindTo(this.registry);
-                this.micrometerProvider.bindTo(this.registry);
+                this.metrics = new SharedObjectPoolMetrics((SharedObjectPoolStats) this.pool, this.registry);
             }
         }
 
@@ -229,22 +217,7 @@ public class SharedObjectPoolStatisticsBenchmark {
                 System.out
                         .println("maxDisposedExceptionDuration=" + this.statListener.getMaxDisposedExceptionDuration());
             } else if ("micrometer".equals(this.statListenerType)) {
-                System.out.println("pooled: " + this.micrometerProvider.pooledGauge.measure());
-                System.out.println("unusedPooled: " + this.micrometerProvider.unusedPooledGauge.measure());
-                System.out.println("shared: " + this.micrometerProvider.sharedGauge.measure());
-
-                System.out.println("hit: " + this.micrometerListener.hitTimer.measure());
-                System.out.println("miss: " + this.micrometerListener.missTimer.measure());
-                System.out.println("createdSuccess: " + this.micrometerListener.createdSuccessTimer.measure());
-                System.out.println("createdException: " + this.micrometerListener.createdExceptionTimer.measure());
-                System.out.println("initializedSuccess: " + this.micrometerListener.initializedSuccessTimer.measure());
-                System.out.println("initializedException: " + this.micrometerListener.initializedExceptionTimer
-                        .measure());
-                System.out.println("disposedSuccess: " + this.micrometerListener.disposedSuccessTimer.measure());
-                System.out.println("disposedException: " + this.micrometerListener.disposedExceptionTimer.measure());
-
-                System.out.println("initializeCount=" + this.micrometerListener.initializedSuccessCount.get());
-                System.out.println("initializeDuration=" + this.micrometerListener.initializedSuccessDuration.get());
+                System.out.println("metrics: " + this.metrics);
             }
 
             // Dispose of shared objects we are keeping.
@@ -252,12 +225,11 @@ public class SharedObjectPoolStatisticsBenchmark {
                 this.keepSharedObjects[i].dispose();
             }
 
-            // Remove the statistics listener.
+            // Dispose of the metrics.
             if ("simple".equals(this.statListenerType)) {
                 ((SharedObjectPoolStats) this.pool).removeSharedObjectPoolStatsListener(this.statListener);
             } else if ("micrometer".equals(this.statListenerType)) {
-                ((SharedObjectPoolStats) this.pool)
-                        .removeSharedObjectPoolStatsListener(this.micrometerListener);
+                this.metrics.dispose();
             }
 
             // Dispose of the pool.
@@ -475,122 +447,6 @@ public class SharedObjectPoolStatisticsBenchmark {
 
         public long getMaxDisposedExceptionDuration() {
             return this.disposedExceptionMax.get();
-        }
-    }
-
-
-    private static class MicrometerSharedObjectPoolStatsProvider implements MeterBinder {
-
-        private final SharedObjectPoolStats stats;
-
-        public Gauge pooledGauge;
-        public Gauge unusedPooledGauge;
-        public Gauge sharedGauge;
-
-
-        public MicrometerSharedObjectPoolStatsProvider(SharedObjectPoolStats stats) {
-            this.stats = stats;
-        }
-
-
-        @Override
-        public void bindTo(MeterRegistry registry) {
-            this.pooledGauge = Gauge.builder("sharedObjectPool.pooled", this.stats,
-                    SharedObjectPoolStats::getPooledObjectsCount)
-                    .register(registry);
-            this.unusedPooledGauge = Gauge.builder("sharedObjectPool.unusedPooled", this.stats,
-                    SharedObjectPoolStats::getUnusedPooledObjectsCount)
-                    .register(registry);
-            this.sharedGauge = Gauge.builder("sharedObjectPool.shared", this.stats,
-                    SharedObjectPoolStats::getSharedObjectsCount)
-                    .register(registry);
-        }
-    }
-
-
-    private static class MicrometerSharedObjectPoolStatsListener implements SharedObjectPoolStatsListener, MeterBinder {
-
-        public Timer hitTimer;
-        public Timer missTimer;
-        public Timer createdSuccessTimer;
-        public Timer createdExceptionTimer;
-        public Timer initializedSuccessTimer;
-        public Timer initializedExceptionTimer;
-        public Timer disposedSuccessTimer;
-        public Timer disposedExceptionTimer;
-
-        public AtomicLong initializedSuccessCount = new AtomicLong();
-        public AtomicLong initializedSuccessDuration = new AtomicLong();
-
-
-        @Override
-        public void bindTo(MeterRegistry registry) {
-            this.hitTimer = Timer.builder("sharedObjectPool.get")
-                    .tag("result", "hit")
-                    .register(registry);
-            this.missTimer = Timer.builder("sharedObjectPool.get")
-                    .tag("result", "miss")
-                    .register(registry);
-            this.createdSuccessTimer = Timer.builder("sharedObjectPool.created")
-                    .tag("result", "success")
-                    .register(registry);
-            this.createdExceptionTimer = Timer.builder("sharedObjectPool.created")
-                    .tag("result", "exception")
-                    .register(registry);
-            this.initializedSuccessTimer = Timer.builder("sharedObjectPool.initialized")
-                    .tag("result", "success")
-                    .register(registry);
-            this.initializedExceptionTimer = Timer.builder("sharedObjectPool.initialized")
-                    .tag("result", "exception")
-                    .register(registry);
-            this.disposedSuccessTimer = Timer.builder("sharedObjectPool.disposed")
-                    .tag("result", "success")
-                    .register(registry);
-            this.disposedExceptionTimer = Timer.builder("sharedObjectPool.disposed")
-                    .tag("result", "exception")
-                    .register(registry);
-        }
-
-
-        @Override
-        public void onSharedObjectGet(long durationNanos, boolean hit) {
-            if (hit) {
-                this.hitTimer.record(durationNanos, TimeUnit.NANOSECONDS);
-            } else {
-                this.missTimer.record(durationNanos, TimeUnit.NANOSECONDS);
-            }
-        }
-
-
-        @Override
-        public void onPooledObjectCreated(long durationNanos, boolean success) {
-            if (success) {
-                this.createdSuccessTimer.record(durationNanos, TimeUnit.NANOSECONDS);
-            } else {
-                this.createdExceptionTimer.record(durationNanos, TimeUnit.NANOSECONDS);
-            }
-        }
-
-
-        @Override
-        public void onPooledObjectInitialized(long durationNanos, boolean success) {
-            if (success) {
-                this.initializedSuccessTimer.record(durationNanos, TimeUnit.NANOSECONDS);
-                this.initializedSuccessCount.incrementAndGet();
-                this.initializedSuccessDuration.addAndGet(durationNanos);
-            } else {
-                this.initializedExceptionTimer.record(durationNanos, TimeUnit.NANOSECONDS);
-            }
-        }
-
-
-        @Override
-        public void onPooledObjectDisposed(long durationNanos, boolean success) {
-            if (success) {
-                this.disposedSuccessTimer.record(durationNanos, TimeUnit.NANOSECONDS);
-            } else {
-                this.disposedExceptionTimer.record(durationNanos, TimeUnit.NANOSECONDS);
-            }
         }
     }
 

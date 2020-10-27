@@ -107,28 +107,44 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
 
     @Override
     public S get(K key) throws InvalidKeyException, InitializationException {
-        // Using a loop because several attempts may be required due to asynchronous operations in other threads.
-        while (true) {
-            // Get an entry, or create a new one. If a new entry is created, it is not initialized yet.
-            Entry entry = this.entries.computeIfAbsent(key, this::createEntry);
+        // Duration statistics and whether we hit or miss, that is whether the object was already in the pool.
+        // For performance and readability of the code we do not go for the full precision when checking for hit or
+        // miss. If the object was not found in the pool during the first optimistic attempt, we mark this execution as
+        // a miss. In some cases it is possible that when we will check the object under an exclusive lock later, we
+        // will find that in the meantime an another thread already created the pooled object, but such cases are too
+        // rare to bother, and properly tracking them would significantly complicate the code.
+        long startGetTimestamp = System.nanoTime();
+        boolean poolHit = false;
 
-            // Optimistically assume that the entry is already active, so we do not require an exclusive lock.
-            // If our assumption is wrong, handle more complicated cases afterwards.
-            S sharedObject = optimisticGetSharedObject(entry);
-            if (sharedObject != null) {
-                return sharedObject;
+        try {
+            // Using a loop because several attempts may be required due to asynchronous operations in other threads.
+            while (true) {
+                // Get an entry, or create a new one. If a new entry is created, it is not initialized yet.
+                Entry entry = this.entries.computeIfAbsent(key, this::createEntry);
+
+                // Optimistically assume that the entry is already active, so we do not require an exclusive lock.
+                // If our assumption is wrong, handle more complicated cases afterwards.
+                S sharedObject = optimisticGetSharedObject(entry);
+                if (sharedObject != null) {
+                    // We have found the pooled object in the cache, so this method call was a hit.
+                    poolHit = true;
+                    return sharedObject;
+                }
+
+                // Handle more complicated cases without additional assumptions, this requires an exclusive lock.
+                // Note that even in this case the method may return null due to asynchronous operations in other threads,
+                // requiring repeated attempts.
+                sharedObject = getSharedObject(entry);
+                if (sharedObject != null) {
+                    return sharedObject;
+                }
+
+                // Another attempt is required if the entry which we got was already disposed of. In the next attempt we
+                // will create a new entry, or another thread may have done the same in a meantime.
             }
-
-            // Handle more complicated cases without additional assumptions, this requires an exclusive lock.
-            // Note that even in this case the method may return null due to asynchronous operations in other threads,
-            // requiring repeated attempts.
-            sharedObject = getSharedObject(entry);
-            if (sharedObject != null) {
-                return sharedObject;
-            }
-
-            // Another attempt is required if the entry which we got was already disposed of. In the next attempt we
-            // will create a new entry, or another thread may have done the same in a meantime.
+        } finally {
+            long endGetTimestamp = System.nanoTime();
+            this.fireSharedObjectGet(endGetTimestamp - startGetTimestamp, poolHit);
         }
     }
 
@@ -156,6 +172,12 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     // Returns the obtained shared object, or null if it is not possible. In the latter case, another attempt
     // is required.
     private S getSharedObject(Entry entry) throws InitializationException {
+        // Duration statistics collected if we actually initialize a new pooled object.
+        boolean attemptedInitialize = false;
+        long startInitializeTimestamp = Long.MIN_VALUE;
+        long endInitializeTimestamp = Long.MIN_VALUE;
+        boolean initializeSuccess = false;
+
         Lock exclusiveEntryLock = entry.exclusiveLock();
         exclusiveEntryLock.lock();
         try {
@@ -167,8 +189,13 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             } else if (entrySharedCount == Entry.NEW) {
                 // The entry was just added to the pool either by this thread or by another thread.
                 // Since this thread synchronized on the entry first, we have to initialize it.
+                attemptedInitialize = true;
+                startInitializeTimestamp = System.nanoTime();
                 try {
                     entry.init();
+                    endInitializeTimestamp = System.nanoTime();
+                    initializeSuccess = true;
+
                 } catch (Exception ex) {
                     // If an attempt to initialize an entry caused an exception, we will not attempt to create
                     // and initialize an entry again, because it could cause an infinite loop.
@@ -199,13 +226,38 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             }
         } finally {
             exclusiveEntryLock.unlock();
+
+            if (attemptedInitialize) {
+                // We have attempted to initialize a new pooled object. Were we successfull? If not, take the
+                // end timestamp.
+                if (!initializeSuccess) {
+                    endInitializeTimestamp = System.nanoTime();
+                }
+                this.firePooledObjectInitialized(endInitializeTimestamp - startInitializeTimestamp,
+                        initializeSuccess);
+            }
         }
     }
 
 
     private Entry createEntry(K key) throws InvalidKeyException {
-        P pooledObject = createPooledObject(key);
-        return new Entry(key, pooledObject);
+        // Duration statistics collected if we actually create a new pooled object.
+        long startCreateTimestamp = System.nanoTime();
+        long endCreateTimestamp = Long.MIN_VALUE;
+        boolean createSuccess = false;
+        try {
+            P pooledObject = createPooledObject(key);
+            endCreateTimestamp = System.nanoTime();
+            createSuccess = true;
+
+            return new Entry(key, pooledObject);
+        } finally {
+            // Were we successfull when creating a new pooled object? If not, take the end timestamp.
+            if (!createSuccess) {
+                endCreateTimestamp = System.nanoTime();
+            }
+            this.firePooledObjectCreated(endCreateTimestamp - startCreateTimestamp, createSuccess);
+        }
     }
 
 
@@ -221,6 +273,11 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
 
         // Should we remove entry from the cache after the synchronized block?
         boolean removeEntryFromCache;
+
+        // Duration statistics collected if we actually dispose of the pooled object.
+        long startDisposeTimestamp = Long.MIN_VALUE;
+        long endDisposeTimestamp = Long.MIN_VALUE;
+        boolean disposeSuccess = false;
 
         Lock exclusiveEntryLock = entry.exclusiveLock();
         exclusiveEntryLock.lock();
@@ -274,9 +331,14 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
 
             // Dispose of the entry. Note that the entry still remains in the cache.
             if (disposeEntryImmediately) {
+                startDisposeTimestamp = System.nanoTime();
                 try {
                     entry.dispose();
+                    endDisposeTimestamp = System.nanoTime();
+                    disposeSuccess = true;
                 } catch (Exception ex) {
+                    endDisposeTimestamp = System.nanoTime();
+                    disposeSuccess = false;
                     logger.error("Exception when disposing of entry {}", entry.getKey(), ex);
                 }
 
@@ -297,6 +359,10 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         // the cache another, "good" one.
         if (removeEntryFromCache) {
             this.entries.remove(entry.getKey(), entry);
+
+            // Since we have evicted the entry, we have disposed of the pooled object, either successfully
+            // or with a failure. Anyway, we may notify statistics listeners.
+            this.firePooledObjectDisposed(endDisposeTimestamp - startDisposeTimestamp, disposeSuccess);
         }
     }
 

@@ -36,77 +36,111 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
 
     @Override
     public S get(K key) throws InvalidKeyException, InitializationException {
-        while (true) {
-            // Should we remove entry from the cache after the synchronized block?
-            boolean removeEntryFromCache;
+        long startGetTimestamp = System.nanoTime();
+        boolean poolHit = false;
 
-            // Exception thrown when attempting to initialize the entry.
-            Exception exceptionOnInit = null;
+        try {
+            while (true) {
+                // Should we remove entry from the cache after the synchronized block?
+                boolean removeEntryFromCache;
 
-            Entry entry = getEntry(key);
-            Lock entryExclusiveLock = entry.exclusiveLock();
-            entryExclusiveLock.lock();
-            try {
-                int entrySharedCount = entry.getSharedCount();
-                if (entrySharedCount >= 0) {
-                    // The entry is already initialized. Just return a shared object.
-                    return entry.createSharedObject();
-                } else if (entrySharedCount == Entry.NEW) {
-                    // The entry was just added to the pool either by this thread or by another thread.
-                    // Since this thread synchronized on the entry first, we have to initialize it.
-                    try {
-                        entry.init();
+                // Exception thrown when attempting to initialize the entry.
+                Exception exceptionOnInit = null;
+
+                Entry entry = getEntry(key);
+
+                // Duration statistics collected if we actually initialize a new pooled object.
+                boolean attemptedInitialize = false;
+                long startInitializeTimestamp = Long.MIN_VALUE;
+                long endInitializeTimestamp = Long.MIN_VALUE;
+                boolean initializeSuccess = false;
+
+                Lock entryExclusiveLock = entry.exclusiveLock();
+                entryExclusiveLock.lock();
+                try {
+                    int entrySharedCount = entry.getSharedCount();
+                    if (entrySharedCount >= 0) {
+                        // The entry is already initialized. Just return a shared object.
+                        poolHit = true;
                         return entry.createSharedObject();
-                    } catch (Exception ex) {
-                        // An attempt to initialize this entry failed. Process this case after releasing
-                        // the synchronization lock on entry.
-                        exceptionOnInit = ex;
+                    } else if (entrySharedCount == Entry.NEW) {
+                        // The entry was just added to the pool either by this thread or by another thread.
+                        // Since this thread synchronized on the entry first, we have to initialize it.
+                        poolHit = false;
+                        attemptedInitialize = true;
+                        startInitializeTimestamp = System.nanoTime();
+                        try {
+                            entry.init();
+                            endInitializeTimestamp = System.nanoTime();
+                            initializeSuccess = true;
+
+                            return entry.createSharedObject();
+                        } catch (Exception ex) {
+                            // An attempt to initialize this entry failed. Process this case after releasing
+                            // the synchronization lock on entry.
+                            exceptionOnInit = ex;
+                            removeEntryFromCache = true;
+                        }
+                    } else {
+                        // The entry is already disposed of. This could happens, for example, in the following scenario:
+                        // * This thread (A) got an entry from the cache. Currently entry supports 1 shared object.
+                        // * Before this thread synchronizes on the entry, another thread (B) synchronizes on the entry
+                        // and disposes of the shared object.
+                        // * Since the entry does not support any shared object anymore, it is eligible for disposal.
+                        // * The entry is disposed and removed from the cache, but this thread (A) already holds the entry.
+                        // * Another thread (B) releases the synchronization lock on the entry.
+                        // * This thread (A) synchronizes on the entry, but the entry is already disposed of.
+                        //
+                        // Examples above is just one of several possible scenarios. Either way, we should expect the case
+                        // when the entry is already disposed of. In such case we will remove the disposed entry
+                        // from the cache, and try once more.
                         removeEntryFromCache = true;
                     }
-                } else {
-                    // The entry is already disposed of. This could happens, for example, in the following scenario:
-                    // * This thread (A) got an entry from the cache. Currently entry supports 1 shared object.
-                    // * Before this thread synchronizes on the entry, another thread (B) synchronizes on the entry
-                    // and disposes of the shared object.
-                    // * Since the entry does not support any shared object anymore, it is eligible for disposal.
-                    // * The entry is disposed and removed from the cache, but this thread (A) already holds the entry.
-                    // * Another thread (B) releases the synchronization lock on the entry.
-                    // * This thread (A) synchronizes on the entry, but the entry is already disposed of.
-                    //
-                    // Examples above is just one of several possible scenarios. Either way, we should expect the case
-                    // when the entry is already disposed of. In such case we will remove the disposed entry
-                    // from the cache, and try once more.
-                    removeEntryFromCache = true;
-                }
-            } finally {
-                entryExclusiveLock.unlock();
-            }
-
-            if (removeEntryFromCache) {
-                // Either the entry is already disposed of, or an attempt to initialize the entry failed.
-                // Remove the entry from the cache. When removing, make sure that we are removing the right
-                // entry to prevent case when another thread had already removed the "bad" entry and inserted
-                // into the cache another, "good" one.
-                Lock poolWriteLock = this.lock.writeLock();
-                poolWriteLock.lock();
-                try {
-                    this.entries.remove(key, entry);
                 } finally {
-                    poolWriteLock.unlock();
+                    entryExclusiveLock.unlock();
+
+                    if (attemptedInitialize) {
+                        // We have attempted to initialize a new pooled object. Were we successfull? If not, take the
+                        // end timestamp.
+                        if (!initializeSuccess) {
+                            endInitializeTimestamp = System.nanoTime();
+                        }
+                        this.firePooledObjectInitialized(endInitializeTimestamp - startInitializeTimestamp,
+                                initializeSuccess);
+                    }
+                }
+
+                if (removeEntryFromCache) {
+                    // Either the entry is already disposed of, or an attempt to initialize the entry failed.
+                    // Remove the entry from the cache. When removing, make sure that we are removing the right
+                    // entry to prevent case when another thread had already removed the "bad" entry and inserted
+                    // into the cache another, "good" one.
+                    Lock poolWriteLock = this.lock.writeLock();
+                    poolWriteLock.lock();
+                    try {
+                        this.entries.remove(key, entry);
+                    } finally {
+                        poolWriteLock.unlock();
+                    }
+                }
+
+                if (exceptionOnInit != null) {
+                    // If an attempt to initialize an entry caused an exception, we will not attempt to create
+                    // and initialize an entry again, because it could cause an infinite loop. Instead, we are re-throwing
+                    // the exception.
+                    throw InitializationException.wrap(key, exceptionOnInit);
                 }
             }
-
-            if (exceptionOnInit != null) {
-                // If an attempt to initialize an entry caused an exception, we will not attempt to create
-                // and initialize an entry again, because it could cause an infinite loop. Instead, we are re-throwing
-                // the exception.
-                throw InitializationException.wrap(key, exceptionOnInit);
-            }
+        } finally {
+            long endGetTimestamp = System.nanoTime();
+            this.fireSharedObjectGet(endGetTimestamp - startGetTimestamp, poolHit);
         }
     }
 
 
     private Entry getEntry(K key) throws InvalidKeyException {
+        // Optimistically attempt to get an entry under a shared lock. If the entry already exist in the pool, we do not
+        // need an exclusive lock.
         Lock poolReadLock = this.lock.readLock();
         poolReadLock.lock();
         try {
@@ -118,18 +152,40 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
             poolReadLock.unlock();
         }
 
+        // We have not found an entry in the pool under a shared lock. Now we get an exclusive lock, and we will create
+        // an entry if it does not exist. We still have to check whether an entry exist, because it may have been
+        // created by another thread in the meantime.
+        // Duration statistics collected if we actually create a new pooled object.
+        boolean attemptedCreate = false;
+        long startCreateTimestamp = Long.MIN_VALUE;
+        long endCreateTimestamp = Long.MIN_VALUE;
+        boolean createSuccess = false;
+
         Lock poolWriteLock = this.lock.writeLock();
         poolWriteLock.lock();
         try {
             Entry entry = this.entries.get(key);
             if (entry == null) {
+                attemptedCreate = true;
+                startCreateTimestamp = System.nanoTime();
                 entry = createEntry(key);
+                endCreateTimestamp = System.nanoTime();
+                createSuccess = true;
+
                 this.entries.put(key, entry);
             }
 
             return entry;
         } finally {
             poolWriteLock.unlock();
+
+            if (attemptedCreate) {
+                // We have attempted to create a new pooled object. Were we successfull? If not, take the end timestamp.
+                if (!createSuccess) {
+                    endCreateTimestamp = System.nanoTime();
+                }
+                this.firePooledObjectCreated(endCreateTimestamp - startCreateTimestamp, createSuccess);
+            }
         }
     }
 
@@ -145,10 +201,13 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
     // It could be that in the meantime the entry is not eligible for a disposal anymore, in such case no disposal
     // takes place.
     private void offerDispose(Entry entry) {
-        logger.trace("!!! Offered to dispose of entry {}", entry.getKey());
-
         // Should we remove entry from the cache after the synchronized block?
         boolean removeEntryFromCache;
+
+        // Duration statistics collected if we actually dispose of the pooled object.
+        long startDisposeTimestamp = Long.MIN_VALUE;
+        long endDisposeTimestamp = Long.MIN_VALUE;
+        boolean disposeSuccess = false;
 
         Lock entryExclusiveLock = entry.exclusiveLock();
         entryExclusiveLock.lock();
@@ -159,8 +218,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
             int entrySharedCount = entry.getSharedCount();
             if (entrySharedCount > 0) {
                 // The entry is providing some shared objects, so it can't be disposed of.
-                logger
-                        .trace("!!! The entry {} provides {} shared objects, skipping disposal", entry.getKey(), entrySharedCount);
                 return;
             } else if (entrySharedCount == Entry.DISPOSED) {
                 // Another thread had already disposed of the entry. This could happens in the following scenario:
@@ -171,7 +228,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
                 // the entry for disposal.
                 // * Another thread (B) obtain the synchronization lock and disposes of the entry.
                 // * This thread (A) obtains the synchronization lock, but the entry is already disposed of.
-                logger.trace("!!! The entry {} is already disposed of, skipping disposal", entry.getKey());
                 return;
             } else if (entrySharedCount == Entry.NEW) {
                 throw new IllegalStateException("Entry offered for disposal, but the status is new: " + entry.getKey());
@@ -186,42 +242,36 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
                 long now = System.currentTimeMillis();
                 long delayBeforeDispose = disposeAt - now;
 
-                logger.trace("!!! Entry {}: lastReturnTime={}, disposeAt={}, now={}, delayBeforeDispose={}",
-                        entry.getKey(), lastReturnTime, disposeAt, now, delayBeforeDispose);
-
                 if (delayBeforeDispose > 0) {
                     // Instead of disposing of the entry immediately, schedule to try again later.
                     ScheduledFuture<?> disposeTask = this.scheduleDisposeTask(() -> this.offerDispose(entry),
                             delayBeforeDispose, TimeUnit.MILLISECONDS);
                     entry.setDisposeTask(disposeTask);
 
-                    logger.trace("!!! Entry {}: scheduled disposal after {} ms", entry.getKey(), delayBeforeDispose);
-
                     // We have scheduled a later attempt.
                     disposeEntryImmediately = false;
                 } else {
                     // Generally asynchronous disposal of entries is configured, but for this entry the idle time
                     // already expired and we shall dispose of it immediately.
-                    logger.trace("!!! Entry {}: delayBeforeDispose <= 0, disposing immediately", entry.getKey());
                     disposeEntryImmediately = true;
                 }
             } else {
                 // A synchronous disposal of entries is configured, we never wait.
-                logger.trace("!!! Entry {}: synchronous disposal configured, diposing immediately", entry.getKey());
                 disposeEntryImmediately = true;
             }
 
             // Dispose of the entry. Note that the entry still remains in the cache.
             if (disposeEntryImmediately) {
-                logger.trace("!!! Entry {}: disposing", entry.getKey());
-
+                startDisposeTimestamp = System.nanoTime();
                 try {
                     entry.dispose();
+                    endDisposeTimestamp = System.nanoTime();
+                    disposeSuccess = true;
                 } catch (Exception ex) {
+                    endDisposeTimestamp = System.nanoTime();
+                    disposeSuccess = false;
                     logger.error("Exception when disposing of entry {}", entry.getKey(), ex);
                 }
-
-                logger.trace("!!! Entry {}: disposed", entry.getKey());
 
                 // We have disposed of the entry, so we shall remove it from cache after the synchronized block.
                 removeEntryFromCache = true;
@@ -239,8 +289,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
         // the right entry to prevent case when another thread had already removed the "bad" entry and inserted into
         // the cache another, "good" one.
         if (removeEntryFromCache) {
-            logger.trace("!!! Entry {}: removing from cache", entry.getKey());
-
             Lock poolWriteLock = this.lock.writeLock();
             poolWriteLock.lock();
             try {
@@ -249,7 +297,9 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
                 poolWriteLock.unlock();
             }
 
-            logger.trace("!!! Entry {}: removed from cache", entry.getKey());
+            // Since we have evicted the entry, we have disposed of the pooled object, either successfully
+            // or with a failure. Anyway, we may notify statistics listeners.
+            this.firePooledObjectDisposed(endDisposeTimestamp - startDisposeTimestamp, disposeSuccess);
         }
     }
 
@@ -391,8 +441,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
 
 
         void init() throws InitializationException {
-            logger.trace("!!! Inside entry {}: initializing", this.key);
-
             Lock entryExclusiveLock = this.exclusiveLock();
             entryExclusiveLock.lock();
             try {
@@ -409,14 +457,10 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
             } finally {
                 entryExclusiveLock.unlock();
             }
-
-            logger.trace("!!! Inside entry {}: initialized", this.key);
         }
 
 
         void dispose() {
-            logger.trace("!!! Inside entry {}: disposing", this.key);
-
             Lock entryExclusiveLock = this.exclusiveLock();
             entryExclusiveLock.lock();
             try {
@@ -427,8 +471,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
             } finally {
                 entryExclusiveLock.unlock();
             }
-
-            logger.trace("!!! Inside entry {}: disposed", this.key);
         }
 
 
@@ -466,8 +508,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
 
 
         S createSharedObject() {
-            logger.trace("!!! Inside entry {}: creating shared object", this.key);
-
             Lock entryExclusiveLock = this.exclusiveLock();
             entryExclusiveLock.lock();
             try {
@@ -478,8 +518,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
 
                 this.sharedCount++;
 
-                logger.trace("!!! Inside entry {}: created shared object, sharedCount={}", this.key, this.sharedCount);
-
                 // If this entry was scheduled for disposal, attempt to cancel the dispose task.
                 // This entry will not be disposed of even if the task can not be cancelled (the task will not dispose
                 // of this entry if it provides any shared objects), but cancelling the task reduces unnecessary load
@@ -487,7 +525,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
                 if (this.disposeTask != null) {
                     this.disposeTask.cancel(true);
                     this.disposeTask = null;
-                    logger.trace("!!! Inside entry {}: cancelled dispose task", this.key);
                 }
 
                 return sharedObject;
@@ -498,8 +535,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
 
 
         private void disposeSharedObject() {
-            logger.trace("!!! Inside entry {}: disposing of shared object", this.key);
-
             // Should we offer the pool to dispose of this entry after the synchronized block?
             boolean offerDisposeEntry = false;
 
@@ -514,9 +549,6 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
                     this.sharedCount--;
                 }
 
-                logger
-                        .trace("!!! Inside entry {}: disposed of shared object, sharedCount={}", this.key, this.sharedCount);
-
                 if (this.sharedCount == 0) {
                     // This entry is not providing any shared objects anymore, and may be disposed of.
                     // It is up to the pool to deside if the entry should actually be disposed of.
@@ -526,15 +558,12 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
 
                     // Set the time when the last shared object was returned.
                     this.lastReturnTime = System.currentTimeMillis();
-
-                    logger.trace("!!! Inside entry {}: disposed of last shared object, will offer dispose", this.key);
                 }
             } finally {
                 entryExclusiveLock.unlock();
             }
 
             if (offerDisposeEntry) {
-                logger.trace("!!! Inside entry {}: offer dispose", this.key);
                 LockingSharedObjectPool.this.offerDispose(this);
             }
         }

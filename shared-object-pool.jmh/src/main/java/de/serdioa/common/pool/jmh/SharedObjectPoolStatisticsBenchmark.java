@@ -53,7 +53,7 @@ public class SharedObjectPoolStatisticsBenchmark {
         /**
          * The type of the object pool implementation.
          */
-        @Param({"sync"})
+        @Param({"sync", "locking", "concurrent"})
         public String type;
 
         /**

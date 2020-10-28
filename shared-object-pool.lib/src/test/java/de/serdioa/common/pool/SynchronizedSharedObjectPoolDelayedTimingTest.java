@@ -12,6 +12,9 @@ import org.junit.Before;
 import org.junit.Test;
 
 
+// WARNING: tests in this class are timing-dependend. They run successfully on a machine without any additional load,
+// when executed in isolation, but may break under a heavy load, for example on a build server.
+// Therefore it makes sense to keep tests in this class disabled by default, and enable only when testing locally.
 public class SynchronizedSharedObjectPoolDelayedTimingTest {
 
     private static final long TICK = 100;

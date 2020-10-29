@@ -3,6 +3,7 @@ package de.serdioa.common.pool;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.PhantomReference;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ScheduledFuture;
@@ -45,6 +46,9 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     // @GuardedBy(this.lifecycleMonitor)
     private Thread sharedObjectsRipper;
 
+    // Is this object pool already disposed of?
+    private volatile boolean disposed = false;
+
     // The synchronization lock for lifecycle events (startup / shutdown).
     private final Object lifecycleMonitor = new Object();
 
@@ -76,13 +80,61 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     @Override
     public void dispose() {
         synchronized (this.lifecycleMonitor) {
+            // Fast-track if this pool is already disposed of.
+            if (this.disposed) {
+                return;
+            }
+
+            // Mark this pool as disposed to prevent new objects from being pooled.
+            this.disposed = true;
+
             if (this.sharedObjectsRipper != null) {
                 this.sharedObjectsRipper.interrupt();
                 this.sharedObjectsRipper = null;
             }
-
-            super.dispose();
         }
+
+        this.disposeEntriesOnShutdown();
+
+        super.dispose();
+    }
+
+
+    // Dispose of all still available entries when this pool is disposed of.
+    // The implementation below looks a bit convoluted, but it is required to report performance metrics
+    // when disposing of entries, without calling external methods (metrics listeners) in a synchronized block.
+    private void disposeEntriesOnShutdown() {
+        while (true) {
+            Optional<Entry> entryHolder = this.entries.values().stream().findAny();
+            if (!entryHolder.isPresent()) {
+                // There are no entries in this pool anymore. Terminate the "while" loop.
+                break;
+            }
+
+            Entry entry = entryHolder.get();
+            disposeEntryOnShutdown(entry);
+        }
+    }
+
+
+    private void disposeEntryOnShutdown(Entry entry) {
+        long startDisposeTimestamp = System.nanoTime();
+        long endDisposeTimestamp;
+        boolean disposeSuccess;
+        try {
+            entry.dispose(true);
+            endDisposeTimestamp = System.nanoTime();
+            disposeSuccess = true;
+        } catch (Exception ex) {
+            endDisposeTimestamp = System.nanoTime();
+            disposeSuccess = false;
+            logger.error("Exception when disposing of entry {}", entry.getKey(), ex);
+        }
+
+        // Remove the entry from the map.
+        this.entries.remove(entry.getKey(), entry);
+
+        this.firePooledObjectDisposed(endDisposeTimestamp - startDisposeTimestamp, disposeSuccess);
     }
 
 
@@ -120,7 +172,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             // Using a loop because several attempts may be required due to asynchronous operations in other threads.
             while (true) {
                 // Get an entry, or create a new one. If a new entry is created, it is not initialized yet.
-                Entry entry = this.entries.computeIfAbsent(key, this::createEntry);
+                Entry entry = this.getEntry(key);
 
                 // Optimistically assume that the entry is already active, so we do not require an exclusive lock.
                 // If our assumption is wrong, handle more complicated cases afterwards.
@@ -145,6 +197,41 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         } finally {
             long endGetTimestamp = System.nanoTime();
             this.fireSharedObjectGet(endGetTimestamp - startGetTimestamp, poolHit);
+        }
+    }
+
+
+    private Entry getEntry(K key) throws InvalidKeyException {
+        // Fast-track if this pool is already disposed of.
+        if (this.disposed) {
+            throw new IllegalStateException("The pool is already disposed of");
+        }
+
+        // Get an entry from the map or create a new one.
+        Entry entry = this.entries.computeIfAbsent(key, this::createEntry);
+
+        // Possible multi-threaded scenario we have to take into account:
+        //
+        // * This method was called on a pool in the thread A. This method had checked that the pool is not disposed of
+        // yet, but the thread A had been "frozen" directly afterwards, before "computeIfAbsent" above has been
+        // executed.
+        // * The method "dispose()" has been called in the thread B for this pool. The method "dispose()" set the
+        // dispose flag, iterated over all entries in the map, disposed of them and finished.
+        // * The thread A "awakes" and continue to execute this method. It executed "computeIfAbsent" above, and created
+        // a new entry, although this pool is already disposed of by the thread B.
+        //
+        // To account for such case, we have to check the "dispose" flag again, and clean up if the flag was set
+        // in the meantime.
+        if (this.disposed) {
+            // Special case: in the meantime this pool has been disposed of. As explained above, we have to clean up.
+            this.disposeEntryOnShutdown(entry);
+            throw new IllegalStateException("The pool is already disposed of");
+        } else {
+            // Normal case: this pool is still alive. Even if the method "dispose()" has been called in another thread,
+            // it has not set the "dispose" flag yet. In such case, when the method "dispose()" continues to run
+            // (assuming it was called at all), it will clean up all entries in the map, including the one we just
+            // created.
+            return entry;
         }
     }
 
@@ -333,7 +420,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             if (disposeEntryImmediately) {
                 startDisposeTimestamp = System.nanoTime();
                 try {
-                    entry.dispose();
+                    entry.dispose(false);
                     endDisposeTimestamp = System.nanoTime();
                     disposeSuccess = true;
                 } catch (Exception ex) {
@@ -541,27 +628,39 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         }
 
 
-        public void dispose() {
+        // Dispose of this entry, that is dispose of the underlying pooled object and mark this entry as disposed.
+        // If the parameter onShutdown is true, it indicates this method is called when shutting down the whole pool.
+        // When this method is called with onShutdown = false, it ensures that the lifecycle stage is respected,
+        // that is it disposes of this entry only if the entry is active, but does not provide any shared objects.
+        // If the parameter onShutdown = true, this method will dispose of this entry regardless of the lifecycle stage.
+        public void dispose(boolean onShutdown) {
             Lock exclusiveLock = this.exclusiveLock();
             exclusiveLock.lock();
             try {
                 int currentSharedCount = this.sharedCount.get();
-                if (currentSharedCount == NEW) {
-                    throw new IllegalStateException("Can not dispose of entry " + this.key
-                            + ": the entry is not initialized yet");
-                } else if (currentSharedCount == DISPOSED) {
-                    throw new IllegalStateException("Can not dispose of entry " + this.key
-                            + ": the entry is already disposed of");
+                if (!onShutdown) {
+                    if (currentSharedCount == NEW) {
+                        throw new IllegalStateException("Can not dispose of entry " + this.key
+                                + ": the entry is not initialized yet");
+                    } else if (currentSharedCount == DISPOSED) {
+                        throw new IllegalStateException("Can not dispose of entry " + this.key
+                                + ": the entry is already disposed of");
+                    } else if (currentSharedCount > 0) {
+                        throw new IllegalStateException("Can not dispose of entry " + this.key
+                                + ": the entry provides" + currentSharedCount + " shared objects");
+                    }
                 }
-                assert (currentSharedCount >= 0);
 
-                try {
-                    ConcurrentSharedObjectPool.this.disposePooledObject(this.pooledObject);
-                } catch (Exception ex) {
-                    // An attempt to dispose of the pooled object failed. Log the exception, but otherwise proceed
-                    // to remove the pooled object.
-                    logger.error("Exception when attempting to dispose of pooled object for the entry {}, "
-                            + "continue removing pooled object", this.key, ex);
+                // TODO: dispose of all shared objects.
+                if (currentSharedCount >= 0) {
+                    try {
+                        ConcurrentSharedObjectPool.this.disposePooledObject(this.pooledObject);
+                    } catch (Exception ex) {
+                        // An attempt to dispose of the pooled object failed. Log the exception, but otherwise proceed
+                        // to remove the pooled object.
+                        logger.error("Exception when attempting to dispose of pooled object for the entry {}, "
+                                + "continue removing pooled object", this.key, ex);
+                    }
                 }
                 this.sharedCount.set(DISPOSED);
             } finally {

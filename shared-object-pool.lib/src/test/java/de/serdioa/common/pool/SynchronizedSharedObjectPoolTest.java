@@ -22,7 +22,6 @@ public class SynchronizedSharedObjectPoolTest extends AbstractSharedObjectPoolTe
     }
 
 
-
     @Test
     public void testDisposeEmptyPool() {
         // Get several shared objects with different keys.

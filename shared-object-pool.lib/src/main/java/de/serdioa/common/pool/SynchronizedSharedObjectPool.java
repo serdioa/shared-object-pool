@@ -21,6 +21,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
     private final Map<K, Entry> entries = new HashMap<>();
 
     // Is this object pool already disposed of?
+    // @GuardedBy(lock)
     private boolean disposed = false;
 
     // Synchronization monitor.

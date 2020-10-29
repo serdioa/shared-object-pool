@@ -1,9 +1,9 @@
 package de.serdioa.common.pool;
 
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -366,18 +366,18 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
     private void disposeEntriesOnShutdown() {
 
         while (true) {
-            Entry entry;
+            Optional<Entry> entryHolder;
+
             synchronized (this.lock) {
-                Iterator<Entry> entryIter = this.entries.values().iterator();
-                if (!entryIter.hasNext()) {
-                    // There are no entries in this pool anymore. Terminate the "while" loop.
-                    break;
-                }
-                entry = entryIter.next();
+                entryHolder = this.entries.values().stream().findAny();
             }
 
-            if (entry != null) {
+            if (entryHolder.isPresent()) {
+                Entry entry = entryHolder.get();
                 disposeEntryOnShutdown(entry);
+            } else {
+                // There are no entries in this pool anymore. Terminate the "while" loop.
+                break;
             }
         }
     }
@@ -486,7 +486,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
                 }
             }
 
-            // Dispose of the underlying pool object, if it is active, that is if it was initialized, 
+            // Dispose of the underlying pool object, if it is active, that is if it was initialized,
             // but not disposed of.
             if (this.sharedCount >= 0) {
                 SynchronizedSharedObjectPool.this.disposePooledObject(this.pooledObject);

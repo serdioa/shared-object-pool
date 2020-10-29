@@ -106,13 +106,13 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     private void disposeEntriesOnShutdown() {
         while (true) {
             Optional<Entry> entryHolder = this.entries.values().stream().findAny();
-            if (!entryHolder.isPresent()) {
+            if (entryHolder.isPresent()) {
+                Entry entry = entryHolder.get();
+                disposeEntryOnShutdown(entry);
+            } else {
                 // There are no entries in this pool anymore. Terminate the "while" loop.
                 break;
             }
-
-            Entry entry = entryHolder.get();
-            disposeEntryOnShutdown(entry);
         }
     }
 

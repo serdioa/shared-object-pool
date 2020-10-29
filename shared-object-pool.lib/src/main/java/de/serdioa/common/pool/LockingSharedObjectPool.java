@@ -1,9 +1,9 @@
 package de.serdioa.common.pool;
 
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
@@ -426,22 +426,21 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
         Lock poolReadLock = this.lock.readLock();
 
         while (true) {
-            Entry entry;
+            Optional<Entry> entryHolder;
 
             poolReadLock.lock();
             try {
-                Iterator<Entry> entryIter = this.entries.values().iterator();
-                if (!entryIter.hasNext()) {
-                    // There are no entries in this pool anymore. Terminate the "while" loop.
-                    break;
-                }
-                entry = entryIter.next();
+                entryHolder = this.entries.values().stream().findAny();
             } finally {
                 poolReadLock.unlock();
             }
 
-            if (entry != null) {
+            if (entryHolder.isPresent()) {
+                Entry entry = entryHolder.get();
                 disposeEntryOnShutdown(entry);
+            } else {
+                // There are no entries in this pool anymore. Terminate the "while" loop.
+                break;
             }
         }
     }

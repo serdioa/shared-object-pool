@@ -1,6 +1,7 @@
 package de.serdioa.common.pool;
 
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ScheduledFuture;
@@ -22,6 +23,11 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
     // @GuardedBy(lock)
     private final Map<K, Entry> entries = new HashMap<>();
 
+    // Is this object pool already disposed of?
+    // @GuardedBy(lock)
+    private boolean disposed = false;
+
+    // Synchronization lock.
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
 
@@ -144,6 +150,11 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
         Lock poolReadLock = this.lock.readLock();
         poolReadLock.lock();
         try {
+            // Before doing anything, check if this pool is already shutting down.
+            if (this.disposed) {
+                throw new IllegalStateException("The pool is already disposed of");
+            }
+
             Entry entry = this.entries.get(key);
             if (entry != null) {
                 return entry;
@@ -164,6 +175,12 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
         Lock poolWriteLock = this.lock.writeLock();
         poolWriteLock.lock();
         try {
+            // Once more, before doing anything, check if this pool is already shutting down.
+            // This pool may have been disposed of between the read lock above and the write lock we are holding now.
+            if (this.disposed) {
+                throw new IllegalStateException("The pool is already disposed of");
+            }
+
             Entry entry = this.entries.get(key);
             if (entry == null) {
                 attemptedCreate = true;
@@ -264,7 +281,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
             if (disposeEntryImmediately) {
                 startDisposeTimestamp = System.nanoTime();
                 try {
-                    entry.dispose();
+                    entry.dispose(false);
                     endDisposeTimestamp = System.nanoTime();
                     disposeSuccess = true;
                 } catch (Exception ex) {
@@ -380,6 +397,83 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
     }
 
 
+    @Override
+    public void dispose() {
+        Lock poolWriteLock = this.lock.writeLock();
+        poolWriteLock.lock();
+        try {
+            // Fast-track if this pool is already disposed of.
+            if (this.disposed) {
+                return;
+            }
+
+            // Mark this pool as disposed.
+            this.disposed = true;
+        } finally {
+            poolWriteLock.unlock();
+        }
+
+        this.disposeEntriesOnShutdown();
+
+        super.dispose();
+    }
+
+
+    // Dispose of all still available entries when this pool is disposed of.
+    // The implementation below looks a bit convoluted, but it is required to report performance metrics
+    // when disposing of entries, without calling external methods (metrics listeners) in a synchronized block.
+    private void disposeEntriesOnShutdown() {
+        Lock poolReadLock = this.lock.readLock();
+
+        while (true) {
+            Entry entry;
+
+            poolReadLock.lock();
+            try {
+                Iterator<Entry> entryIter = this.entries.values().iterator();
+                if (!entryIter.hasNext()) {
+                    // There are no entries in this pool anymore. Terminate the "while" loop.
+                    break;
+                }
+                entry = entryIter.next();
+            } finally {
+                poolReadLock.unlock();
+            }
+
+            if (entry != null) {
+                disposeEntryOnShutdown(entry);
+            }
+        }
+    }
+
+
+    // Dispose of the specified entry when this pool is disposed of.
+    private void disposeEntryOnShutdown(Entry entry) {
+        long startDisposeTimestamp = System.nanoTime();
+        long endDisposeTimestamp;
+        boolean disposeSuccess;
+        try {
+            entry.dispose(true);
+            endDisposeTimestamp = System.nanoTime();
+            disposeSuccess = true;
+        } catch (Exception ex) {
+            endDisposeTimestamp = System.nanoTime();
+            disposeSuccess = false;
+            logger.error("Exception when disposing of entry {}", entry.getKey(), ex);
+        }
+
+        Lock poolWriteLock = this.lock.writeLock();
+        poolWriteLock.lock();
+        try {
+            this.entries.remove(entry.getKey(), entry);
+        } finally {
+            poolWriteLock.unlock();
+        }
+
+        this.firePooledObjectDisposed(endDisposeTimestamp - startDisposeTimestamp, disposeSuccess);
+    }
+
+
     private class Entry {
 
         // This entry is not initialized yet.
@@ -464,13 +558,33 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
         }
 
 
-        void dispose() {
+        // Dispose of this entry, that is dispose of the underlying pooled object and mark this entry as disposed.
+        // If the parameter onShutdown is true, it indicates this method is called when shutting down the whole pool.
+        // When this method is called with onShutdown = false, it ensures that the lifecycle stage is respected,
+        // that is it disposes of this entry only if the entry is active, but does not provide any shared objects.
+        // If the parameter onShutdown = true, this method will dispose of this entry regardless of the lifecycle stage.
+        void dispose(boolean onShutdown) {
             Lock entryExclusiveLock = this.exclusiveLock();
             entryExclusiveLock.lock();
             try {
-                ensureActive();
+                if (!onShutdown) {
+                    // This is an attempt to dispose of this entry in a normal case, that is in a running pool.
+                    // Check that the entry may be disposed of, that is the entry is active, but does not provide any shared
+                    // objects.
+                    if (this.sharedCount == NEW) {
+                        throw new IllegalStateException("Entry is not initialized yet");
+                    } else if (this.sharedCount == DISPOSED) {
+                        throw new IllegalStateException("Entry is already disposed of");
+                    } else if (this.sharedCount > 0) {
+                        throw new IllegalStateException("Entry provides " + this.sharedCount + " shared objects");
+                    }
+                }
 
-                LockingSharedObjectPool.this.disposePooledObject(this.pooledObject);
+                // Dispose of the underlying pool object, if it is active, that is if it was initialized,
+                // but not disposed of.
+                if (this.sharedCount >= 0) {
+                    LockingSharedObjectPool.this.disposePooledObject(this.pooledObject);
+                }
                 this.sharedCount = DISPOSED;
             } finally {
                 entryExclusiveLock.unlock();

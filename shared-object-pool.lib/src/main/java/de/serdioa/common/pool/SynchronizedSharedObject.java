@@ -14,6 +14,17 @@ import org.slf4j.LoggerFactory;
  */
 public class SynchronizedSharedObject implements InvocationHandler {
 
+    private enum DisposeType {
+        /**
+         * This shared object has been disposed of directly by the client.
+         */
+        DIRECT,
+        /**
+         * This shared object has been disposed of by the pool.
+         */
+        POOL
+    };
+
     private static final Logger logger = LoggerFactory.getLogger(SynchronizedSharedObject.class);
 
     private static final String DISPOSE_METHOD_NAME = "dispose";
@@ -30,16 +41,12 @@ public class SynchronizedSharedObject implements InvocationHandler {
     // when a shared object is GC'ed before this invocation handler finished executing the dispose callback. To prevent
     // a false positive, we keep a reference on the shared object until this invocation handler is disposed of.
     //
-    // In addition, sharedObject == null is used as an indicator that this invocation handler has been disposed of.
-    // We may have used an additional boolean variables, but there is no advantage in doing so if we have to keep
-    // a reference on the shared object anyway.
-    //
     // @GuardedBy(mutex)
     private Object sharedObject;
 
-    // If this shared object has been disposed of, was it disposed of by the shared objects pool?
+    // Was this shared object disposed of? If yes, was it disposed of directly or by the shared object pool?
     // @GuardedBy(mutex)
-    private boolean disposedByPool;
+    private DisposeType disposed;
 
     // Synchronization lock for the lifecycle and accessing the pooled object.
     private final Object mutex = new Object();
@@ -71,8 +78,8 @@ public class SynchronizedSharedObject implements InvocationHandler {
 
     private Object invokePooled(Method method, Object[] args) throws Throwable {
         synchronized (this.mutex) {
-            if (this.sharedObject == null) {
-                if (this.disposedByPool) {
+            if (this.disposed != null) {
+                if (this.disposed == DisposeType.POOL) {
                     throw new IllegalStateException("Method called on dynamic shared object disposed by the pool: " + method);
                 } else {
                     throw new IllegalStateException("Method called on disposed dynamic shared object: " + method);
@@ -86,9 +93,9 @@ public class SynchronizedSharedObject implements InvocationHandler {
 
     private void dispose() {
         synchronized (this.mutex) {
-            if (this.sharedObject == null) {
+            if (this.disposed != null) {
                 // This shared object already has been disposed of.
-                if (this.disposedByPool) {
+                if (this.disposed == DisposeType.POOL) {
                     // If it has been disposed by the pool when the complete pool has been disposed, and now a client
                     // attemps to dispose of the object again, just return: we have nothing to do (this shared object
                     // already has been disposed of), and it is not an error, but a possible normal case during shutdown
@@ -101,24 +108,33 @@ public class SynchronizedSharedObject implements InvocationHandler {
                 }
             }
 
-            try {
-                this.disposeCallback.run();
-            } catch (Exception ex) {
-                logger.error("Exception when calling dispose() on dynamic shared object, pooled object: "
-                        + this.pooledObject);
-            }
-
-            // Mark this invocation handler as disposed, and allow to GC the shared object proxy.
-            this.sharedObject = null;
+            // Mark this shared object as disposed to prevent double-dispose.
+            this.disposed = DisposeType.DIRECT;
         }
+
+        // Invoke the pool callback outside of the synchronized block. If we would invoke it in the synchronized block,
+        // we could get a deadlock when the pool and the client attempt to dispose of the same shared object
+        // simultaneously.
+        // The check in the synchronized block above ensures that only one thread may invoke the callback
+        // (the second thread will see that this.disposed is already set, and will exit this method earlier).
+        try {
+            this.disposeCallback.run();
+        } catch (Exception ex) {
+            logger.error("Exception when calling dispose() on dynamic shared object, pooled object: "
+                    + this.pooledObject);
+        }
+
+        // Finalize dispose: allow the GC to collect the shared object proxy.
+        // We do not require any synchronization here, we are just giving the object to the GC.
+        this.sharedObject = null;
     }
 
 
     private void disposeByPool() {
         synchronized (this.mutex) {
-            if (this.sharedObject == null) {
+            if (this.disposed != null) {
                 // This shared object already has been disposed of.
-                if (this.disposedByPool) {
+                if (this.disposed != null) {
                     throw new IllegalStateException("Pool attempts to dispose of a dynamic shared object already disposed of by the pool");
                 } else {
                     throw new IllegalStateException("Pool attempts to dispose of an already disposed dynamic shared object");
@@ -129,15 +145,15 @@ public class SynchronizedSharedObject implements InvocationHandler {
             // itself, and we do not need to notify it back.
             //
             // Mark this invocation handler as disposed, and allow to GC the shared object proxy.
+            this.disposed = DisposeType.POOL;
             this.sharedObject = null;
-            this.disposedByPool = true;
         }
     }
 
 
     private boolean isDisposed() {
         synchronized (this.mutex) {
-            return (this.sharedObject == null);
+            return (this.disposed != null);
         }
     }
 

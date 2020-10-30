@@ -71,15 +71,32 @@ public class SynchronizedSharedCounter implements SharedCounter {
                 }
             }
 
-            logger.trace("Disposing of SharedCounter[{}]", this.key);
+            // Mark this shared object as disposed.
             this.disposed = true;
-            this.disposeCallback.run();
+        }
 
-            // This code actually never executes, but since dummy is volatile, JVM can't optimize it away
-            // and can't GC this object before the disposeCallback() above is finished.
-            if (this.dummy) {
-                this.get();
-            }
+        // Invoke the dispose callback outside of the locked block.
+        // If we would invoke the callback in the locked block, we may get a deadlock when a pool and a client attempt
+        // to dispose of the shared object simultaneously.
+        this.disposeCallback.run();
+
+        // This code actually never executes, but since dummy is volatile, JVM can't optimize it away
+        // and can't GC this object before the disposeCallback() above is finished.
+        // Without this call in seldom cases I have observed the following behaviour:
+        //
+        // * The client calls dispose() on this shared object.
+        // * This shared object calls disposeCallback, informing the pool.
+        // * Before the method disposeCallback executes, GC detects that this shared object is not used anymore and
+        // claims it.
+        // * The reaper thread in the pool which tracks shared objects which were GC'ed without being properly disposed
+        // of finds out that this shared object has been GC'ed. Since the disposeCallback is not executed yet,
+        // the reaper decides that this object had been GC'ed without being disposed of, and writes a warning.
+        // * The method disposeCallback finishes, but a false positive warning is already in the log.
+        //
+        // To put it short, no error happens, but without the method call below there are false positive log messages
+        // about shared objects not properly disposed of.
+        if (this.dummy) {
+            this.get();
         }
     }
 

@@ -5,7 +5,7 @@ package de.serdioa.common.pool;
  * Indicates how a shared object has been disposed of. Tracking how a shared object has been disposed of allows to catch
  * errors, such as disposing of the same shared object twice.
  */
-enum SharedObjectDisposeType {
+/* package private */ enum SharedObjectDisposeType {
     /**
      * The shared object has been disposed of directly by the client, calling the method {@link SharedObject#dispose()}
      * on the shared object in question.

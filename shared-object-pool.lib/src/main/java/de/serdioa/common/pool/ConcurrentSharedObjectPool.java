@@ -44,7 +44,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
 
     // The thread processing phantom references on shared objects claimed by the GC.
     // @GuardedBy(this.lifecycleMonitor)
-    private Thread sharedObjectsRipper;
+    private Thread sharedObjectsReaper;
 
     // Is this object pool already disposed of?
     private volatile boolean disposed = false;
@@ -65,9 +65,9 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         this.stackTraceProvider = Objects.requireNonNull(stackTraceProvider);
 
         synchronized (this.lifecycleMonitor) {
-            this.sharedObjectsRipper = new Thread(this::reapSharedObjects, this.name + "-ripper");
-            this.sharedObjectsRipper.setDaemon(true);
-            this.sharedObjectsRipper.start();
+            this.sharedObjectsReaper = new Thread(this::reapSharedObjects, this.name + "-reaper");
+            this.sharedObjectsReaper.setDaemon(true);
+            this.sharedObjectsReaper.start();
         }
     }
 
@@ -88,9 +88,9 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             // Mark this pool as disposed to prevent new objects from being pooled.
             this.disposed = true;
 
-            if (this.sharedObjectsRipper != null) {
-                this.sharedObjectsRipper.interrupt();
-                this.sharedObjectsRipper = null;
+            if (this.sharedObjectsReaper != null) {
+                this.sharedObjectsReaper.interrupt();
+                this.sharedObjectsReaper = null;
             }
         }
 
@@ -517,7 +517,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         //
         // The entry may be in one of possible 3 states: NEW (-1), ACTIVE (>= 0) or DISPOSED (-2).
         // In order to change the state, this entry must be locked for the exclusive access (this.lock.writeLock),
-        // other operations require shared lock (this.lock.writeLock).
+        // other operations require shared lock (this.lock.readLock).
         //
         // See "lock" below.
         private final AtomicInteger sharedCount = new AtomicInteger(NEW);
@@ -552,7 +552,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         // lock. Other operations, such as creating or disposing of a shared object, requires shared ("read") lock.
         // The locking policy ensures that no other operations may run when the entry's lifecycle stage is changed,
         // but many non-lifecycle-related operations may run in parallel when the entry is active.
-        private final ReadWriteLock lock = new ReentrantReadWriteLock();
+        private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
 
         Entry(K key, P pooledObject) {
@@ -651,7 +651,30 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
                     }
                 }
 
-                // TODO: dispose of all shared objects.
+                // If we are shutting down the pool, cancel the asynchronous dispose task, if any.
+                // We are already disposing of this entry, and by cancelling the task we may reduce unnecessary load
+                // on the disposal executor.
+                if (onShutdown && this.disposeTask != null) {
+                    this.disposeTask.cancel(true);
+                    this.disposeTask = null;
+                }
+
+                // If we are shutting down the pool, there could be shared objects provided by this entry.
+                // Dispose of them.
+                if (onShutdown) {
+                    // Mark all references on shared objects as disposed. Note that shared objects can not be created
+                    // or disposed by concurrent threads, because creating or disposing of shared objects requires
+                    // a shared lock on this entry, but we are holding the exclusive lock.
+                    // Due to the exclusive lock, we are accessing sharedObjectPhantomRefs in exclusive mode.
+                    for (SharedObjectPhantomReference<K, S> phantomRef : this.sharedObjectPhantomRefs.values()) {
+                        disposeSharedObjectOnShutdown(phantomRef);
+                    }
+                    this.sharedObjectPhantomRefs.clear();
+                }
+
+                // Shall we dispose of the pooled object? We do not dispose of the pooled object if this entry has not
+                // been initialized yet (that is, the entry state is NEW = -1), or if this entry is already disposed of
+                // (that is, the entry state is DISPOSED = -2).
                 if (currentSharedCount >= 0) {
                     try {
                         ConcurrentSharedObjectPool.this.disposePooledObject(this.pooledObject);
@@ -662,6 +685,8 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
                                 + "continue removing pooled object", this.key, ex);
                     }
                 }
+
+                // Finally, mark this entry as disposed.
                 this.sharedCount.set(DISPOSED);
             } finally {
                 exclusiveLock.unlock();
@@ -747,6 +772,11 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
                 // object is properly disposed of.
                 this.sharedObjectPhantomRefs.put(phantomReferenceKey, sharedObjectPhantomRef);
 
+                // Increment the number of shared objects provided by this entry. Note that the number of provided
+                // shared objects may have changed since the start of this method (we are holding a shared lock, so
+                // other threads may create shared objects in parallel), but this entry still remains active (changing
+                // the lifecycle stage requires an exclusive lock, but we are holding a shared lock).
+                // We do not actually require the return value.
                 int updatedSharedCount = this.sharedCount.incrementAndGet();
 
                 // If this entry was scheduled for disposal, attempt to cancel the dispose task.
@@ -796,6 +826,9 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
                     SharedObjectPhantomReference<K, S> sharedObjectPhantomRef =
                             this.sharedObjectPhantomRefs.remove(phantomRefKey);
                     if (sharedObjectPhantomRef != null) {
+                        // Normal case: the reference we are disposing of is still in the map with references on shared
+                        // objects we are providing.
+
                         boolean isDisposed = sharedObjectPhantomRef.isDisposed();
                         if (isDisposed) {
                             // The shared object is still in the active map, but it is already marked as disposed.
@@ -803,8 +836,9 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
                             // removed from the map and marked as disposed under the synchronization lock,
                             // so this case indicates a programming error.
                             logger.error("Disposing of shared object {} / {} ({}): ref still exist, but the object "
-                                    + "is already disposed by {}", this.key, sharedObjectId,
-                                    (direct ? "direct" : "ref"), sharedObjectPhantomRef.getDisposedByName());
+                                    + "is already disposed by {} ({})", this.key, sharedObjectId,
+                                    (direct ? "direct" : "reaper"), sharedObjectPhantomRef.getDisposedByName(),
+                                    sharedObjectPhantomRef.getDisposeType());
                         } else {
                             // Expected case: ref is available and is not marked as disposed.
                             // Dispose of the shared object. The return value indicates that this entry does not
@@ -819,43 +853,73 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
                         // Phantom reference is not found in the map, so the shared object is already disposed of.
                         // Below we check various cases: some of them are perfectly OK, other indicate errors.
 
-                        // Check the reference (which we received as an argument to this method) to see if the shared
-                        // object was disposed directly or indirectly.
-                        boolean disposedDirect = providedPhantomRef.isDisposedDirect();
-                        if (direct) {
-                            if (disposedDirect) {
-                                // The shared object was already directly disposed. This indicates a programming
-                                // error: the same shared object was directly disposed more than once.
+                        // Check the reference (which we received as an argument to this method) to see how the shared
+                        // object was disposed of.
+                        SharedObjectDisposeType refDisposeType = providedPhantomRef.getDisposeType();
+                        if (refDisposeType == SharedObjectDisposeType.DIRECT) {
+                            // The shared object has been already directly disposed of by the client.
+
+                            if (direct) {
+                                // Already disposed directly by the client, now attempt to dispose directly by the
+                                // client the second time. This indicates a programming error on the client side: the client
+                                // attempts to dispose of the same shared object more than once.
                                 logger.warn("Disposing of shared object {} / {} ({}): the object is already disposed "
-                                        + "by {}", this.key, sharedObjectId, (direct ? "direct" : "ref"),
+                                        + "by {} ()", this.key, sharedObjectId, (direct ? "direct" : "reaper"),
+                                        providedPhantomRef.getDisposedByName(), refDisposeType);
+                            } else {
+                                // Already disposed directly by the client, now the reaper thread attempts to dispose
+                                // of the shared object by the phantom reference. This is a possible valid case,
+                                // just skip.
+                            }
+                        } else if (refDisposeType == SharedObjectDisposeType.REAPER) {
+                            // The shared object has been already directly disposed of by the reaper thread.
+
+                            if (direct) {
+                                // Already disposed by the reaper thread through the phantom reference, now attempt to
+                                // dispose directly by the client.
+                                // I have observed such case due to Java runtime optimization. If the JVM runtime may
+                                // prove that the object is not used in the subsequent code, it may give the object to
+                                // the GC even though a method invoked on that object is still running. The "natural"
+                                // borders of methods do not play any role, because methods may be inlined by the JVM
+                                // runtime. As a workaround to prevent such false positives, one has to use the shared
+                                // object after the method dispose() is called on it, but it is not elegant.
+                                logger.info("Disposing of shared object {} / {} (direct): the object is already "
+                                        + " disposed by the reaper thread {}. Please ignore previous warning from the "
+                                        + "reaper thread about this shared object not being properly disposed of, "
+                                        + "that is just a result of JVM runtime optimization", this.key, sharedObjectId,
                                         providedPhantomRef.getDisposedByName());
                             } else {
-                                // The shared object was already disposed by the ripper thread through a phantom
-                                // reference. I have observed such case due to Java runtime optimization.
-                                // If the JVM runtime may prove that the object is not used in the subsequent code,
-                                // it may give the object to the GC even though a method invoked on that object is still
-                                // running. The "natural" borders of methods do not play any role, because methods
-                                // may be inlined by the JVM runtime. As a workaround to prevent such false positives,
-                                // one has to use the shared object after the method dispose() is called on it,
-                                // but it is not elegent.
-                                logger.info("Disposing of shared object {} / {} ({}): the object is already disposed "
-                                        + "by the ripper thread {}. Please ignore previous warning from the ripper "
-                                        + "thread about this shared object not being properly disposed of, that is "
-                                        + "just a result of JVM runtime optimization", this.key, sharedObjectId,
-                                        (direct ? "direct" : "ref"), providedPhantomRef.getDisposedByName());
+                                // Already disposed by the reaper thread through the phantom reference, now attemp to
+                                // dispose by the reaper thread again. This indicates an internal error because the
+                                // reaper thread should process each shared object only once.
+                                logger.error("Disposing of shared object {} / {} (reaper): the object is already "
+                                        + "disposed by the reaper thread {}", this.key, sharedObjectId,
+                                        providedPhantomRef.getDisposedByName());
                             }
+                        } else if (refDisposeType == SharedObjectDisposeType.SHUTDOWN) {
+                            // The shared object has been already directly disposed when shutting down the pool.
+
+                            // This is valid in both cases:
+                            //
+                            // * When now a client attempts to dispose of the shared object: when shutting down an
+                            // applicaiton, various components may shut down in parallel, so the client components will
+                            // dispose of shared objects in parallel with the pool being disposed of.
+                            //
+                            // * When now a reaper attempts to dispose of the shared object: during the shutdown process
+                            // we interrupt the reaper thread to stop it, but we do not wait until the reaper thread
+                            // is actually stopped. It could happens that the reaper thread runs for a while after
+                            // the shutdown of the pool is complete, and attempts to dispose of already disposed
+                            // entries.
+                            //
+                            // In both cases, we have nothing to do, this entry already has been disposed of.
                         } else {
-                            if (disposedDirect) {
-                                // Expected case: attempt to dispose shared object through phantom reference
-                                // by the ripper found that the shared object already has been disposed directly.
-                            } else {
-                                // The shared object has already been disposed by the ripper thread. This indicates
-                                // a programming error because the ripper thread should process each shared object
-                                // only once.
-                                logger.warn("Disposing of shared object {} / {} ({}): the object is already disposed "
-                                        + "by {}", this.key, sharedObjectId, (direct ? "direct" : "ref"),
-                                        providedPhantomRef.getDisposedByName());
-                            }
+                            // We have not found the phantom reference in the map, but the reference is not marked as
+                            // disposed yet. This is an internal error: the phantom reference shall be removed from
+                            // the map and marked as disposed of in the synchronized block we are currently in.
+                            assert (refDisposeType == null);
+
+                            logger.error("Disposing of shared object {} / {} ({}): ref is not found, but the object "
+                                    + "is not marked as disposed");
                         }
                     }
                 }
@@ -902,7 +966,8 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             assert (currentSharedCount > 0);
 
             // Mark the phantom reference as disposed.
-            sharedObjectPhantomRef.markAsDisposed(direct);
+            sharedObjectPhantomRef.markAsDisposed(direct ? SharedObjectDisposeType.DIRECT
+                    : SharedObjectDisposeType.REAPER);
 
             // Decrement number of shared objects provided by this entry.
             int updatedSharedCount = this.sharedCount.decrementAndGet();
@@ -914,6 +979,47 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             // Note that in the meantime this entry may provide another shared object, to before actually disposing
             // of this entry the pool will check the prerequisites under an exclusive lock.
             return (updatedSharedCount == 0);
+        }
+
+
+        // Dispose of the shared object held by the provided reference, when shutting down the pool.
+        // When shutting down a pool, different rules apply as during the normal disposing.
+        private void disposeSharedObjectOnShutdown(SharedObjectPhantomReference<K, S> providedPhantomRef) {
+            // We are already have an exclusive lock on the pool when shutting it down.
+            assert (this.lock.isWriteLockedByCurrentThread());
+
+            long sharedObjectId = providedPhantomRef.getSharedObjectId();
+
+            synchronized (providedPhantomRef) {
+                // Difference to a normal callback-based dispose method: here we do not check if the provided reference
+                // is still in the map, because we were called from a method which iterates over the map.
+
+                boolean isDisposed = providedPhantomRef.isDisposed();
+                if (isDisposed) {
+                    // The shared object is still in the active map, but it is already marked as disposed.
+                    // This is an unexpected case, because normally the phantom reference should have been
+                    // removed from the map and marked as disposed under the synchronization lock,
+                    // so this case indicates a programming error.
+                    logger.error("Disposing of shared object {} / {} ({}): ref still exist, but the object "
+                            + "is already disposed by {}", this.key, sharedObjectId,
+                            SharedObjectDisposeType.SHUTDOWN, providedPhantomRef.getDisposedByName());
+                } else {
+                    // Expected case: ref is available and is not marked as disposed. Dispose of the shared object.
+
+                    // Difference with the normal disposing method: we do not validate the state of this entry and
+                    // the number of shared objects when disposing each entry. We have already checked them and
+                    // written an appropriate log message once, before disposing of all entries.
+                    // We also could skip decrementing a number of shared objects provided by this entry: since this
+                    // method is called only when disposing of all shared objects during shutdown, the counter will
+                    // be set once after all shared objects are disposed of. No other thread could see the counter
+                    // in the meantime, because we are holding an exclusive lock on this entry.
+                    // Mark the phantom reference as disposed.
+                    providedPhantomRef.markAsDisposed(SharedObjectDisposeType.SHUTDOWN);
+                }
+            }
+
+            // Difference to a normal disposing method: here we do not remove the provided reference from the map,
+            // it will be removed by the caller after it disposes of all shared objects.
         }
     }
 
@@ -945,11 +1051,11 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         private String disposedByName;
 
         // Was the shared object held by this phantom reference disposed directly, that is by calling it's dispose
-        // method (true) or indirectly, that is by the ripper thread cleaning up phantom references (false).
+        // method (true) or indirectly, that is by the reaper thread cleaning up phantom references (false).
         // This variable is used to track double-dispose errors, when the same shared object is disposed of more than
         // once.
         // @GuardedBy synchronized(this)
-        private boolean disposedDirect;
+        private SharedObjectDisposeType disposeType;
 
 
         SharedObjectPhantomReference(K key, long sharedObjectId, StackTrace stackTrace,
@@ -993,7 +1099,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         // may be used only inside the class ConcurrentSharedObjectPool (this file), so we are in a full control.
         // Assertions are just to check for possible programming errors, especially if this class is refactored later.
 
-        public void markAsDisposed(boolean direct) {
+        public void markAsDisposed(SharedObjectDisposeType disposeType) {
             assert (Thread.holdsLock(this));
 
             // Clear this phantom reference.
@@ -1002,7 +1108,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             // by the reaper thread, there is nothing to track anymore (the shared object already has been GC'ed).
             this.clear();
             this.disposedByName = Thread.currentThread().getName();
-            this.disposedDirect = direct;
+            this.disposeType = disposeType;
         }
 
 
@@ -1020,10 +1126,10 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
         }
 
 
-        public boolean isDisposedDirect() {
+        public SharedObjectDisposeType getDisposeType() {
             assert (Thread.holdsLock(this));
 
-            return this.disposedDirect;
+            return this.disposeType;
         }
     }
 

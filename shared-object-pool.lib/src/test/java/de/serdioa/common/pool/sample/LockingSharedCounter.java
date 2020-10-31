@@ -25,31 +25,33 @@ public class LockingSharedCounter implements SharedCounter {
         public SharedCounter createShared(PooledCounter pooledObject, Runnable disposeCallback) {
             return new LockingSharedCounter(pooledObject, disposeCallback);
         }
-
-
-        @Override
-        public void disposeByPool(SharedCounter sharedObject) {
-            ((LockingSharedCounter) sharedObject).disposeByPool();
-        }
     };
 
     private final String key;
-    private final PooledCounter pooledCounter;
+
+    // The pooled object backing this shared object.
+    // A null pooled object indicates that this shared object has been disposed of.
+    // @GuardedBy(lock)
+    private PooledCounter pooledCounter;
+
+    // The callback to be invoked when a client disposes of this shared object.
     private final Runnable disposeCallback;
 
     private volatile boolean dummy = false;
-
-    // @GuardedBy(lock)
-    private boolean disposed = false;
-    private boolean disposedByPool;
 
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
 
     public LockingSharedCounter(PooledCounter pooledCounter, Runnable disposeCallback) {
-        this.pooledCounter = Objects.requireNonNull(pooledCounter);
-        this.disposeCallback = Objects.requireNonNull(disposeCallback);
-        this.key = this.pooledCounter.getKey();
+        Lock readLock = this.lock.readLock();
+        readLock.lock();
+        try {
+            this.pooledCounter = Objects.requireNonNull(pooledCounter);
+            this.disposeCallback = Objects.requireNonNull(disposeCallback);
+            this.key = this.pooledCounter.getKey();
+        } finally {
+            readLock.unlock();
+        }
 
         logger.trace("Constructed SharedCounter [{}]", this.key);
     }
@@ -60,24 +62,14 @@ public class LockingSharedCounter implements SharedCounter {
         Lock writeLock = this.lock.writeLock();
         writeLock.lock();
         try {
-            if (this.disposed) {
+            if (this.pooledCounter == null) {
                 // This shared object already has been disposed of.
-                if (this.disposedByPool) {
-                    // If it has been disposed by the pool when the complete pool has been disposed, and now a client
-                    // attemps to dispose of the object again, just return: we have nothing to do (this shared object
-                    // already has been disposed of), and it is not an error, but a possible normal case during shutdown
-                    // of the application.
-                    return;
-                } else {
-                    // On the other hand, if this shared object has been disposed of by a client, and now a client
-                    // attempts to dispose of this shared object again, it indicates an error.
-                    throw new IllegalStateException("Method dispose() called on already disposed SharedCounter["
-                            + this.key + "]");
-                }
+                throw new IllegalStateException("Method dispose() called on already disposed SharedCounter["
+                        + this.key + "]");
             }
 
             // Mark this shared object as disposed.
-            this.disposed = true;
+            this.pooledCounter = null;
         } finally {
             writeLock.unlock();
         }
@@ -108,39 +100,12 @@ public class LockingSharedCounter implements SharedCounter {
     }
 
 
-    private void disposeByPool() {
-        Lock writeLock = this.lock.writeLock();
-        writeLock.lock();
-        try {
-            if (this.disposed) {
-                // This shared object already has been disposed of.
-                if (this.disposedByPool) {
-                    throw new IllegalStateException("Pool attempts to dispose of a SharedCounter[" + this.key
-                            + "] already disposed of by the pool");
-                } else {
-                    throw new IllegalStateException("Pool attempts to dispose of an already disposed SharedCounter ["
-                            + this.key + "]");
-                }
-            }
-
-            // When disposing by the pool, do not call the dispose callback: the pool disposes of the shared object
-            // itself, and we do not need to notify it back.
-            //
-            // Mark this invocation handler as disposed, and allow to GC the shared object proxy.
-            this.disposed = true;
-            this.disposedByPool = true;
-        } finally {
-            writeLock.unlock();
-        }
-    }
-
-
     @Override
     public boolean isDisposed() {
         Lock readLock = this.lock.readLock();
         readLock.lock();
         try {
-            return this.disposed;
+            return (this.pooledCounter == null);
         } finally {
             readLock.unlock();
         }
@@ -187,12 +152,8 @@ public class LockingSharedCounter implements SharedCounter {
 
 
     private void ensureActive() {
-        if (this.disposed) {
-            if (this.disposedByPool) {
-                throw new IllegalStateException("SharedCounter[" + this.key + "] is already disposed of by the pool");
-            } else {
-                throw new IllegalStateException("SharedCounter[" + this.key + "] is already disposed of");
-            }
+        if (this.pooledCounter == null) {
+            throw new IllegalStateException("SharedCounter[" + this.key + "] is already disposed of");
         }
     }
 

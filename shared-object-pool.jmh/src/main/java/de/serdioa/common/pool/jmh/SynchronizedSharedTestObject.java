@@ -8,23 +8,23 @@ import java.util.Objects;
  */
 public class SynchronizedSharedTestObject implements SharedTestObject {
 
-    private final TestObject pooled;
-
-    // @GuardedBy(mutex)
-    private boolean disposed = false;
+    // @GuardedBy(this.mutex)
+    private TestObject pooled;
 
     private final Object mutex = new Object();
 
 
     public SynchronizedSharedTestObject(TestObject pooled) {
-        this.pooled = Objects.requireNonNull(pooled);
+        synchronized (this.mutex) {
+            this.pooled = Objects.requireNonNull(pooled);
+        }
     }
 
 
     @Override
     public void run(int tokens) {
         synchronized (this.mutex) {
-            if (this.disposed) {
+            if (this.pooled == null) {
                 throw new IllegalStateException("Shared object is already disposed of");
             } else {
                 this.pooled.run(tokens);
@@ -36,10 +36,10 @@ public class SynchronizedSharedTestObject implements SharedTestObject {
     @Override
     public void dispose() {
         synchronized (this.mutex) {
-            if (this.disposed) {
+            if (this.pooled == null) {
                 throw new IllegalStateException("Shared object is already disposed of");
             } else {
-                this.disposed = true;
+                this.pooled = null;
             }
         }
     }
@@ -48,7 +48,7 @@ public class SynchronizedSharedTestObject implements SharedTestObject {
     @Override
     public boolean isDisposed() {
         synchronized (this.mutex) {
-            return this.disposed;
+            return (this.pooled == null);
         }
     }
 }

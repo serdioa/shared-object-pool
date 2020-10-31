@@ -11,16 +11,20 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  */
 public class LockingSharedTestObject implements SharedTestObject {
 
-    private final TestObject pooled;
-
-    // @GuardedBy(lock)
-    private boolean disposed = false;
+    // @GuardedBy(this.lock)
+    private TestObject pooled;
 
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
 
     public LockingSharedTestObject(TestObject pooled) {
-        this.pooled = Objects.requireNonNull(pooled);
+        final Lock exclusiveLock = this.lock.readLock();
+        exclusiveLock.lock();
+        try {
+            this.pooled = Objects.requireNonNull(pooled);
+        } finally {
+            exclusiveLock.unlock();
+        }
     }
 
 
@@ -29,7 +33,7 @@ public class LockingSharedTestObject implements SharedTestObject {
         final Lock sharedLock = this.lock.readLock();
         sharedLock.lock();
         try {
-            if (this.disposed) {
+            if (this.pooled == null) {
                 throw new IllegalStateException("Shared object is already disposed of");
             } else {
                 this.pooled.run(tokens);
@@ -45,10 +49,10 @@ public class LockingSharedTestObject implements SharedTestObject {
         final Lock exclusiveLock = this.lock.writeLock();
         exclusiveLock.lock();
         try {
-            if (this.disposed) {
+            if (this.pooled == null) {
                 throw new IllegalStateException("Shared object is already disposed of");
             } else {
-                this.disposed = true;
+                this.pooled = null;
             }
         } finally {
             exclusiveLock.unlock();
@@ -61,7 +65,7 @@ public class LockingSharedTestObject implements SharedTestObject {
         final Lock sharedLock = this.lock.readLock();
         sharedLock.lock();
         try {
-            return this.disposed;
+            return (this.pooled == null);
         } finally {
             sharedLock.unlock();
         }

@@ -85,6 +85,78 @@ public abstract class AbstractSharedObjectPoolTest {
     }
 
 
+    // Get a shared object from the pool and dispose of it.
+    // Expect the pool to not contain any pooled objects afterwards.
+    @Test
+    public void testGetAndDispose() {
+        SharedCounter cnt = this.pool.get("AAA");
+        assertEquals(1, cnt.increment());
+        assertEquals(1, this.pool.getSharedObjectsCount("AAA"));
+        assertEquals(1, this.pool.getPooledObjectsCount());
+
+        cnt.dispose();
+        assertEquals(0, this.pool.getPooledObjectsCount());
+    }
+
+
+    // Get a shared object with the same key multiple times, and dispose of the shared objects.
+    @Test
+    public void testGetSameShared() {
+        // Get a shared object.
+        SharedCounter first = this.pool.get("AAA");
+        assertEquals(1, first.increment());
+        assertEquals(1, this.pool.getSharedObjectsCount("AAA"));
+        assertEquals(1, this.pool.getPooledObjectsCount());
+
+        // Get a second shared object with the same key. Objects are sharing the same underlying pooled object.
+        SharedCounter second = this.pool.get("AAA");
+        assertEquals(2, second.increment());
+        assertEquals(2, this.pool.getSharedObjectsCount("AAA"));
+        assertEquals(1, this.pool.getPooledObjectsCount());
+
+        // Dispose of the first shared object.
+        first.dispose();
+        assertEquals(1, this.pool.getSharedObjectsCount("AAA"));
+        assertEquals(1, this.pool.getPooledObjectsCount());
+
+        // Dispose of the second shared object.
+        second.dispose();
+        assertEquals(0, this.pool.getSharedObjectsCount("AAA"));
+        assertEquals(0, this.pool.getPooledObjectsCount());
+    }
+
+
+    // Get shared objects with different keys, and dispose of the shared objects.
+    @Test
+    public void testGetDifferentShared() {
+        // Get a shared object.
+        SharedCounter first = this.pool.get("AAA");
+        assertEquals(1, first.increment());
+        assertEquals(1, this.pool.getSharedObjectsCount("AAA"));
+        assertEquals(0, this.pool.getSharedObjectsCount("BBB"));
+        assertEquals(1, this.pool.getPooledObjectsCount());
+
+        // Get a shared object with a different key.
+        SharedCounter second = this.pool.get("BBB");
+        assertEquals(1, second.increment());
+        assertEquals(1, this.pool.getSharedObjectsCount("AAA"));
+        assertEquals(1, this.pool.getSharedObjectsCount("BBB"));
+        assertEquals(2, this.pool.getPooledObjectsCount());
+
+        // Dispose of the first shared object.
+        first.dispose();
+        assertEquals(0, this.pool.getSharedObjectsCount("AAA"));
+        assertEquals(1, this.pool.getSharedObjectsCount("BBB"));
+        assertEquals(1, this.pool.getPooledObjectsCount());
+
+        // Dispose of the second shared object.
+        second.dispose();
+        assertEquals(0, this.pool.getSharedObjectsCount("AAA"));
+        assertEquals(0, this.pool.getSharedObjectsCount("BBB"));
+        assertEquals(0, this.pool.getPooledObjectsCount());
+    }
+
+
     @Test
     public void testDisposeEmptyPool() {
         // Get several shared objects with different keys.

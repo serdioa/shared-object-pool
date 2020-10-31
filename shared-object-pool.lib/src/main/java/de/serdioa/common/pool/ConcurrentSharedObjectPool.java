@@ -482,6 +482,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     }
 
 
+    @Override
     public int getSharedObjectsCount(K key) {
         Entry entry = this.entries.get(key);
         return (entry == null ? 0 : Math.max(0, entry.getSharedCount()));

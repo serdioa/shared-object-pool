@@ -118,6 +118,9 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
     }
 
 
+    public abstract int getSharedObjectsCount(K key);
+
+
     @Override
     public void addSharedObjectPoolStatsListener(SharedObjectPoolStatsListener listener) {
         this.statsListeners.add(listener);

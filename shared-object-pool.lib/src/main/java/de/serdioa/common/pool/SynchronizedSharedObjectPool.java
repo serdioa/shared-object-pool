@@ -325,6 +325,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
     }
 
 
+    @Override
     public int getSharedObjectsCount(K key) {
         Entry entry;
         synchronized (this.lock) {

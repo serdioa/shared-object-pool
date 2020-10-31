@@ -371,6 +371,7 @@ public class LockingSharedObjectPool<K, S extends SharedObject, P> extends Abstr
     }
 
 
+    @Override
     public int getSharedObjectsCount(K key) {
         Entry entry;
 

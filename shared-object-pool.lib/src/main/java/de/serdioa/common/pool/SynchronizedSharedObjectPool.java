@@ -40,9 +40,10 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
     private SynchronizedSharedObjectPool(String name,
             PooledObjectFactory<K, P> pooledObjectFactory,
             SharedObjectFactory<P, S> sharedObjectFactory,
+            boolean disposeUnused,
             long idleDisposeTimeMillis,
             int disposeThreads) {
-        super(name, pooledObjectFactory, sharedObjectFactory, idleDisposeTimeMillis, disposeThreads);
+        super(name, pooledObjectFactory, sharedObjectFactory, disposeUnused, idleDisposeTimeMillis, disposeThreads);
     }
 
 
@@ -201,6 +202,11 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
     // It could be that in the meantime the entry is not eligible for a disposal anymore, in such case no disposal
     // takes place.
     private void offerDispose(Entry entry) {
+        if (!this.disposeUnused) {
+            // Fast track if disposing of unused entries is disabled.
+            return;
+        }
+
         // Should we remove entry from the cache after the synchronized block?
         boolean removeEntryFromCache;
 
@@ -599,7 +605,7 @@ public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends 
             this.validate();
 
             return new SynchronizedSharedObjectPool<>(this.name, this.pooledObjectFactory, this.sharedObjectFactory,
-                    this.idleDisposeTimeMillis, this.disposeThreads);
+                    this.disposeUnused, this.idleDisposeTimeMillis, this.disposeThreads);
         }
     }
 }

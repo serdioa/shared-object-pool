@@ -38,6 +38,9 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
     // Factory for creating shared objects from pooled objects.
     private final SharedObjectFactory<P, S> sharedObjectFactory;
 
+    // Should we actually dispose of unused pooled objects?
+    protected final boolean disposeUnused;
+
     // Duration in milliseconds to keep idle pooled objects before disposing of them. Non-positive number means
     // disposing of idle pooled objects immediately.
     // If initializing a pooled object is an expensive operation, for example if it requires loading large amount
@@ -56,6 +59,7 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
     protected AbstractSharedObjectPool(final String name,
             PooledObjectFactory<K, P> pooledObjectFactory,
             SharedObjectFactory<P, S> sharedObjectFactory,
+            boolean disposeUnused,
             long idleDisposeTimeMillis,
             int disposeThreads) {
 
@@ -63,6 +67,7 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
         this.pooledObjectFactory = Objects.requireNonNull(pooledObjectFactory);
         this.sharedObjectFactory = Objects.requireNonNull(sharedObjectFactory);
 
+        this.disposeUnused = disposeUnused;
         this.idleDisposeTimeMillis = idleDisposeTimeMillis;
         this.disposeExecutor = this.buildDisposeExecutor(disposeThreads);
     }
@@ -214,6 +219,9 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
         // Factory for creating shared objects from pooled objects.
         protected SharedObjectFactory<P, S> sharedObjectFactory;
 
+        // Should we actually dispose of unused pooled objects?
+        protected boolean disposeUnused = true;
+
         // Duration in milliseconds to keep idle pooled objects before disposing of them. Non-positive number means
         // disposing of idle pooled objects immediately.
         // By default idle pooled objects are disposed of immediately.
@@ -242,6 +250,12 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
 
         public SELF setSharedObjectFactory(SharedObjectFactory<P, S> sharedObjectFactory) {
             this.sharedObjectFactory = sharedObjectFactory;
+            return self();
+        }
+
+
+        public SELF setDisposeUnused(boolean disposeUnused) {
+            this.disposeUnused = disposeUnused;
             return self();
         }
 
@@ -280,6 +294,19 @@ public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
             }
             // A non-positive idleDisposeTimeMillis is valid, it indicates that idle objects shall be disposed of
             // immediately.
+
+            // If disposeUnused == false, that is pooled objects shall not be disposed of, other dispose-related
+            // properties shall not be set.
+            if (!this.disposeUnused) {
+                if (this.idleDisposeTimeMillis > 0) {
+                    throw new IllegalStateException("disposeUnused is false, but idleDisposeTimeMillis ("
+                            + this.idleDisposeTimeMillis + ") > 0");
+                }
+                if (this.disposeThreads > 0) {
+                    throw new IllegalStateException("disposeUnused is false, but disposeThreads ("
+                            + this.disposeThreads + ") > 0");
+                }
+            }
 
             // If idleDisposeTimeMillis > 0, that is a postponed disposal is requested, the number of dispose threads
             // must be > 0.

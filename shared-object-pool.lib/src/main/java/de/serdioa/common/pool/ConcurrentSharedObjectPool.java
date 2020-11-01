@@ -31,9 +31,6 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     // Pooled entries.
     private final ConcurrentMap<K, Entry> entries = new ConcurrentHashMap<>();
 
-    // Should we actually dispose unused entries?
-    private boolean disposeUnusedEntries = true;
-
     // Provide stack trace for tracking allocation of abandoned shared objects.
     private final StackTraceProvider stackTraceProvider;
 
@@ -55,11 +52,12 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     private ConcurrentSharedObjectPool(String name,
             PooledObjectFactory<K, P> pooledObjectFactory,
             SharedObjectFactory<P, S> sharedObjectFactory,
+            boolean disposeUnused,
             long idleDisposeTimeMillis,
             int disposeThreads,
             StackTraceProvider stackTraceProvider) {
 
-        super(name, pooledObjectFactory, sharedObjectFactory, idleDisposeTimeMillis, disposeThreads);
+        super(name, pooledObjectFactory, sharedObjectFactory, disposeUnused, idleDisposeTimeMillis, disposeThreads);
 
         this.stackTraceProvider = Objects.requireNonNull(stackTraceProvider);
 
@@ -68,11 +66,6 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             this.sharedObjectsReaper.setDaemon(true);
             this.sharedObjectsReaper.start();
         }
-    }
-
-
-    public void setDisposeUnusedEntries(boolean disposeUnusedEntries) {
-        this.disposeUnusedEntries = disposeUnusedEntries;
     }
 
 
@@ -352,7 +345,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
     // It could be that in the meantime the entry is not eligible for a disposal anymore, in such case no disposal
     // takes place.
     private void offerDispose(Entry entry) {
-        if (!this.disposeUnusedEntries) {
+        if (!this.disposeUnused) {
             // Fast track if disposing of unused entries is disabled.
             return;
         }
@@ -1032,7 +1025,7 @@ public class ConcurrentSharedObjectPool<K, S extends SharedObject, P> extends Ab
             // No need to explicitly check stackTraceProvider: default value is not null, and the setter protects
             // against null.
             return new ConcurrentSharedObjectPool<>(this.name, this.pooledObjectFactory, this.sharedObjectFactory,
-                    this.idleDisposeTimeMillis, this.disposeThreads, this.stackTraceProvider);
+                    this.disposeUnused, this.idleDisposeTimeMillis, this.disposeThreads, this.stackTraceProvider);
         }
     }
 }

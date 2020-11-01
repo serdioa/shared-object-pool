@@ -4,6 +4,13 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 
+/**
+ * An implementation of a {@link PooledObjectFactory} that allows to register external functions or lambda expressions
+ * for each function, acting as an adapter for legacy code.
+ *
+ * @param <K> type of keys used to create pooled objects.
+ * @param <P> type of pooled objects created by this factory.
+ */
 public class DefaultPooledObjectFactory<K, P> implements PooledObjectFactory<K, P> {
 
     private final PooledObjectCreator<K, P> creator;
@@ -37,6 +44,14 @@ public class DefaultPooledObjectFactory<K, P> implements PooledObjectFactory<K, 
     }
 
 
+    /**
+     * A builder for creating a {@link PooledObjectFactory} by registering external functions or lambda expressions for
+     * each function. Only the creator function is mandatory. The initializer and the disposer functions are no-op by
+     * default.
+     *
+     * @param <K> type of keys used to create pooled objects.
+     * @param <P> type of pooled objects created by this factory.
+     */
     public static class Builder<K, P> {
 
         private PooledObjectCreator<K, P> creator;

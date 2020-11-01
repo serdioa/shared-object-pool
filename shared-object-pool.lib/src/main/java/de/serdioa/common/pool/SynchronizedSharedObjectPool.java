@@ -11,7 +11,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
-// Simple implementation using synchronization.
+/**
+ * An implementation of an {@link SharedObjectPool} using plain Java synchronization. Due to a very low runtime
+ * overhead, this implementation is faster than {@link ConcurrentSharedObjectPool} when the pool is simultaneously used
+ * by a very small number of threads (max. 2 threads). In most real-life scenarios the
+ * {@link ConcurrentSharedObjectPool} is recommended instead of this implementation.
+ *
+ * @param <K> the type of keys used to access shared objects provided by this pool.
+ * @param <S> the type of shared objects provided by this pool.
+ * @param <P> the type of implementation objects backing shared objects provided by this pool.
+ */
 public class SynchronizedSharedObjectPool<K, S extends SharedObject, P> extends AbstractSharedObjectPool<K, S, P> {
 
     private static final Logger logger = LoggerFactory.getLogger(SynchronizedSharedObjectPool.class);

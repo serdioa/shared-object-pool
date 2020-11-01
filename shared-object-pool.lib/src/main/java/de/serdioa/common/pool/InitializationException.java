@@ -1,6 +1,9 @@
 package de.serdioa.common.pool;
 
 
+/**
+ * An exception thrown when a new pooled object can not be initialized.
+ */
 public class InitializationException extends RuntimeException {
 
     /** Serial version UID. */

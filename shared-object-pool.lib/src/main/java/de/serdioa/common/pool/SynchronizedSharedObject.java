@@ -10,7 +10,12 @@ import org.slf4j.LoggerFactory;
 
 
 /**
- * Generic reflection-based implementation of {@link SharedObject} using synchronization.
+ * Generic reflection-based implementation of {@link SharedObject} using synchronization. This implementation is
+ * marginally faster as {@link LockingSharedObject} when each shared object is used just by one thread, but the
+ * performance linearly degrades if multiple threads access the same shared object. Since even in a single-threaded case
+ * the overhead is just marginally smaller than of the locking implementation (3 nanoseconds), this implementation is
+ * not recommended, except of cases when the code is time-critical, and it is guaranteed that each shared object is used
+ * just by one thread.
  */
 public class SynchronizedSharedObject implements InvocationHandler {
 

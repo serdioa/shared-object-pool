@@ -17,7 +17,8 @@ import org.slf4j.LoggerFactory;
 
 
 /**
- * An implementation of an {@link SharedObjectPool} using concurrent map.
+ * An implementation of an {@link SharedObjectPool} using concurrent map. This implementation scales well with a number
+ * of threads, and is recommended in most cases.
  *
  * @param <K> the type of keys used to access shared objects provided by this pool.
  * @param <S> the type of shared objects provided by this pool.

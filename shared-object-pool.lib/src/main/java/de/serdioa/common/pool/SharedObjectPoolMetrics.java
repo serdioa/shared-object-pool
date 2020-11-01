@@ -12,6 +12,9 @@ import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Timer;
 
 
+/**
+ * Micrometer performance metrics for a {@link SharedObjectPool}.
+ */
 public class SharedObjectPoolMetrics {
 
     private final SharedObjectPoolStats stats;
@@ -150,6 +153,7 @@ public class SharedObjectPoolMetrics {
     private String toString(Meter meter) {
         return meter.getId() + ": " + meter.measure();
     }
+
 
     private class StatsListener implements SharedObjectPoolStatsListener {
 

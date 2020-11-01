@@ -13,6 +13,15 @@ package de.serdioa.common.pool;
  * @param <S> the type of the shared object.
  */
 public interface SharedObjectFactory<P, S extends SharedObject> {
-
+    /**
+     * Creates a shared object from the provided pooled object. When client disposes of the created shared object,
+     * the shared object shall invoke the provided {@code disposeCallback}, informing the pool that the shared object
+     * is not used anymore.
+     *
+     * @param pooledObject the pooled object for which a shared object to be created.
+     * @param disposeCallback the callback to be called when the shared object is disposed of.
+     *
+     * @return a new shared object.
+     */
     S createShared(P pooledObject, Runnable disposeCallback);
 }

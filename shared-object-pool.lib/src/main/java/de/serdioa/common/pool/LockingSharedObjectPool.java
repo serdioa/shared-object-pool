@@ -14,7 +14,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
-// Implementation using read/write locks.
+/**
+ * An implementation of an {@link SharedObjectPool} using locks. This implementation scales very bad with a number of
+ * threads and is not recommended to be used. It is provided just for comparison with other implementations.
+ *
+ * @param <K> the type of keys used to access shared objects provided by this pool.
+ * @param <S> the type of shared objects provided by this pool.
+ * @param <P> the type of implementation objects backing shared objects provided by this pool.
+ */
 public class LockingSharedObjectPool<K, S extends SharedObject, P> extends AbstractSharedObjectPool<K, S, P> {
 
     private static final Logger logger = LoggerFactory.getLogger(LockingSharedObjectPool.class);

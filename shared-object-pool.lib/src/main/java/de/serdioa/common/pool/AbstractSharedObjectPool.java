@@ -14,6 +14,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
+/**
+ * An abstract base class for several implementations of the {@link SharedObjectPool}.
+ *
+ * @param <K> the type of keys used to access shared objects provided by this pool.
+ * @param <S> the type of shared objects provided by this pool.
+ * @param <P> the type of implementation objects backing shared objects provided by this pool.
+ */
 public abstract class AbstractSharedObjectPool<K, S extends SharedObject, P>
         implements SharedObjectPool<K, S>, SharedObjectPoolStats {
 

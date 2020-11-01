@@ -1,6 +1,11 @@
 package de.serdioa.common.pool;
 
 
+/**
+ * A stack trace indicating a place where a shared object has been allocated. A {@link SharedObjectPool} may track where
+ * shared objects were allocated to provide better warning messages when a shared object is abandoned by a client
+ * without being properly disposed of.
+ */
 public class StackTrace {
 
     // A shared empty array of stack trace elements.

@@ -13,7 +13,9 @@ import org.slf4j.LoggerFactory;
 
 
 /**
- * Generic reflection-based implementation of {@link SharedObject} using locks.
+ * Generic reflection-based implementation of {@link SharedObject} using locks, recommended to be used in most cases.
+ * Compared to a hand-written implementation of a shared object this reflection-based implementation has an overhead of
+ * about 5 ns per method call, which is acceptable for most applications.
  */
 public class LockingSharedObject implements InvocationHandler {
 

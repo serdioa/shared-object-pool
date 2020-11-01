@@ -19,7 +19,7 @@ and `shared object pool`.
 A `pooled object` is an object which contains all the business logic. In our
 example with FX exchange rates, a `pooled object` is an FX rate object for a
 particular currency, capable of connecting to a remote market, receiving live
-"ticking" prices over network, and providing this prices to it's clients.
+"ticking" prices over network, and providing this prices to its clients.
 
 A `shared object` is a wrapper around a `pooled object` provided by the pool
 to a particular client, where a "client" is a piece of code (a class, a Spring
@@ -102,7 +102,7 @@ This library provides 3 implementations of a `shared object pool`:
 * `ConcurrentSharedObjectPool` - a generic-purpose implementation based on
 non-blocking data structures. This implementation is recommended in most cases.
 
-* `SynchronizedSharedObjectPool` - an implementation based plain Java
+* `SynchronizedSharedObjectPool` - an implementation based on plain Java
 synchronization. This implementation is significantly simpler than the
 concurrent implementation, so it is faster when a pool may be simultaneously
 used only by a few threads, but the performance of this implementation
@@ -114,7 +114,7 @@ hand you could guarantee that the pool is never accessed simultaneously by
 multiple threads.
 
 * `LockingSharedObjectPool` - an implementation based on locks. Contrary to
-an intuitive expectation, this implementation is even slower as the
+an intuitive expectation, this implementation is even slower than the
 `SynchronizedSharedObjectPool` and is not recommended in any scenario. It is
 provided only for a comparison.
 
@@ -122,8 +122,8 @@ Performance tests for available `shared object pool` implementations
 are available in a
 [separate document](shared-object-pool.jmh/src/main/R/SharedObjectPool.html).
 
-In order to implement a pool for a particular object type, you must provide
-to a pool implementation two factories:
+In order to implement a pool for a particular object type, you must configure
+a pool implementation by providing two factories:
 
 * A `PooledObjectFactory` is responsible for creating new `pooled objects`, and
 for destroying `pooled objects` which are not required anymore.
@@ -149,7 +149,7 @@ thread.
 
 An alternative to using reflection-based shared objects provided by the library,
 is to use a hand-crafted shared object implementation which does not rely on
-reflection, instead using a normal method calls to delegate to a backing `pooled
+reflection, using a normal method calls instead to delegate to a backing `pooled
 object`. In my tests an overhead of a reflection-based shared object compared
 to a hand-crafted shared object is about 5 nanoseconds per method call, so in
 most cases an overhead of maintaining a separate hand-crafted `shared object`
@@ -243,7 +243,7 @@ By default all pool implementations provided by this library dispose of the
 All pool implementations support several configuration parameters which allows
 to modify when `pooled objects` are disposed of:
 
-* `disposeUnused` - defaults to `false`. When set to `true`, the pool will never
+* `disposeUnused` - defaults to `true`. When set to `false`, the pool will never
 dispose of `pooled objects`, keeping them in cache even if they are not backing
 any active `shared object`. This mode may be useful when `pooled objects` are
 expensive to create, but cheap to keep. For example, this mode makes sense
@@ -280,7 +280,9 @@ The `ConcurrentSharedObjectPool` implementation contains a protection against
 such cases, tracking abandoned `shared objects`. The implementation relies
 on the `PhantomReference` class. When the `ConcurrentSharedObjectPool` detects
 that a `shared object` has been claimed by the GC without being properly
-dispose of, it writes a warning message to a log.
+dispose of, it writes a warning message to a log and considers the
+`shared object` to be not used by the client anymore, making possible to
+dispose of the backing `pooled object`.
 
 By default the warning message contains just a key of the `shared object` which
 was not properly disposed of. The library allows to register on a pool a stack
@@ -305,7 +307,7 @@ a `shared object` is provided by the pool, so it quickly accumulates.
 * `SecurityManagerStackTraceProvider` - uses a `SecurityManager` to obtain the
 current stack trace. A stack trace from this provider contain only names of
 classes, but it does not contain names of functions or lines in the source code.
-On the other hand, this implementation is faster then the
+On the positive side, this implementation is 5 times faster then the
 `ThrowableStackTraceProvider`, it takes 1-2 microseconds to provide a stack
 trace.
 
@@ -325,12 +327,12 @@ to GC the object. If the thread executing the method `dispose()` is put on ice
 by the JVM, and the GC thread runs instead, the application may observe that
 first a phantom reference on the GC'ed object appears in the reference queue,
 and only later the method `dispose()` continues. In such case the protection
-against abandoned objects provided by the `SecurityManagerStackTraceProvider`
-first will detect that an object is abandoned, and a short time later will
-attempt to properly dispose of the object. `SecurityManagerStackTraceProvider`
-writes a special log message when such case is detected, telling to ignore
-the previous warning about an abandoned object.
+against abandoned objects provided by the `ConcurrentSharedObjectPool`
+first detects that an object is abandoned, and a short time later attempts to
+properly dispose of the object. `ConcurrentSharedObjectPool` writes a special
+log message when such case is detected, telling to ignore the previous false
+positive warning about an abandoned object.
 
 Such false positive warnings happens very rarely. One could prevent them by
 using a `shared object` even after it is disposed of (for example, by calling
-the method `isDisposed()`), but it is not elegant and makes the code slower.
+the method `SharedObject.isDisposed()`), but it is not elegant and makes the code slower.

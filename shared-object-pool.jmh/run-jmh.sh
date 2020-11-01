@@ -13,5 +13,16 @@ SharedObjectBenchmark() {
     done
 }
 
-SharedObjectBenchmark
+StackTraceProviderBenchmark() {
+    local BENCHMARK=StackTraceProviderBenchmark
 
+    for THREADS in $(echo 1) ; do
+        echo "Running $BENCHMARK with $THREADS threads"
+        $JAVA_HOME/bin/java -jar target/benchmarks.jar $BENCHMARK -f 1 -t $THREADS -w 5s -r 5s \
+            -o target/${BENCHMARK}_${THREADS}.txt \
+            -rff target/${BENCHMARK}_${THREADS}.csv 2>&1
+    done
+}
+
+# SharedObjectBenchmark
+StackTraceProviderBenchmark

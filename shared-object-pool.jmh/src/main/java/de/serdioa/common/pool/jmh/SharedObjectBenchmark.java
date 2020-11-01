@@ -2,9 +2,13 @@ package de.serdioa.common.pool.jmh;
 
 import java.util.concurrent.TimeUnit;
 
+import de.serdioa.common.pool.DefaultPooledObjectFactory;
 import de.serdioa.common.pool.LockingSharedObject;
+import de.serdioa.common.pool.PooledObjectFactory;
 import de.serdioa.common.pool.SharedObject;
+import de.serdioa.common.pool.SharedObjectFactory;
 import de.serdioa.common.pool.SynchronizedSharedObject;
+import de.serdioa.common.pool.WrappedPooledObjectFactory;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Mode;
@@ -58,23 +62,49 @@ public class SharedObjectBenchmark {
         @Param({"pooled", "locking", "sync", "reflection-locking", "reflection-sync"})
         public String type;
 
-        @Param({"0", "10", "100", "200", "300", "400", "500", "600", "700", "800", "900", "1000"})
+        @Param({"true", "false"})
+        public boolean wrapped;
+
+        @Param({"0", "10", "100", "1000"})
         public int tokens;
 
+
         protected TestObject buildSharedObject(PooledTestObject pooledObject) {
+            TestObject effectivePooledObject;
+            if (this.wrapped) {
+                // To create a wrapped pooled object we require a pooled object factory.
+                // Create a dummy factory which always returns the same pooled object.
+                PooledObjectFactory<Object, TestObject> dummyFactory =
+                        new DefaultPooledObjectFactory.Builder<Object, TestObject>()
+                                .setCreator(key -> pooledObject)
+                                .build();
+
+                // Create a wrapper factory.
+                PooledObjectFactory<Object, TestObject> wrapperFactory =
+                        new WrappedPooledObjectFactory<>(dummyFactory, TestObject.class);
+
+                // Create a wrapper for the pooled object.
+                effectivePooledObject = wrapperFactory.create("dummy");
+                wrapperFactory.initialize(effectivePooledObject);
+            } else {
+                effectivePooledObject = pooledObject;
+            }
+
             switch (this.type) {
                 case "pooled":
-                    return pooledObject;
+                    return effectivePooledObject;
                 case "sync":
-                    return new SynchronizedSharedTestObject(pooledObject);
+                    return new SynchronizedSharedTestObject(effectivePooledObject);
                 case "reflection-sync":
-                    return SynchronizedSharedObject.factory(SharedTestObject.class).createShared(pooledObject, () -> {
-                    });
+                    return SynchronizedSharedObject.factory(SharedTestObject.class)
+                            .createShared(effectivePooledObject, () -> {
+                            });
                 case "locking":
-                    return new LockingSharedTestObject(pooledObject);
+                    return new LockingSharedTestObject(effectivePooledObject);
                 case "reflection-locking":
-                    return LockingSharedObject.factory(SharedTestObject.class).createShared(pooledObject, () -> {
-                    });
+                    return LockingSharedObject.factory(SharedTestObject.class)
+                            .createShared(effectivePooledObject, () -> {
+                            });
                 default:
                     throw new IllegalArgumentException("Unexpected type of the shared counter: " + this.type);
             }
